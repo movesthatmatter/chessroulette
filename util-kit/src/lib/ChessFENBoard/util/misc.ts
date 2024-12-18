@@ -8,8 +8,8 @@ import type {
   ShortChessColor,
   WhiteLongColor,
   WhiteShortColor,
-} from '../../Chess';
-import { isShortChessColor } from '../../Chess';
+} from '../../ChessRouler';
+import { isShortChessColor } from '../../ChessRouler';
 
 export const isPromotableMove = (m: ChessMove, piece: Piece) => {
   return (
@@ -38,3 +38,5 @@ export function swapColor<C extends ChessColor>(c: C) {
     return c === 'white' ? 'black' : 'white';
   }
 }
+
+export const isUpperCase = (s: string) => s === s.toUpperCase();

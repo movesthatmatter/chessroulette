@@ -1,18 +1,22 @@
-import { PieceSymbol, Square } from 'chess.js';
+import { Err, Ok, Result } from 'ts-results';
+import { PieceSymbol, Square, Chess } from 'chess.js';
 import { Arrow } from 'react-chessboard/dist/chessboard/types';
-import type {
+import {
   BlackColor,
   ChessArrowId,
   ChessColor,
   ChessFEN,
   ChessMove,
   ChessPGN,
+  GameOverReason,
   LongChessColor,
   ShortChessColor,
   WhiteColor,
 } from './types';
-import { Chess } from 'chess.js';
-import { fenBoardPieceSymbolToPieceSymbol } from '../ChessFENBoard';
+import {
+  ChessFENBoard,
+  fenBoardPieceSymbolToPieceSymbol,
+} from '../ChessFENBoard';
 import { getRandomInt } from '../misc';
 
 export const isShortChessColor = (s: string): s is ShortChessColor =>
@@ -86,6 +90,19 @@ export const getNewChessGame = (
   }
 };
 
+// export const isMoveValid = (instance: Chess, move: ChessMove) => {
+//   instance.undo
+
+//   try {
+//     instance.move(localChessMoveToChessLibraryMove(move));
+
+//     return true;
+//   } catch (e) {
+    
+//     return prev;
+//   }
+// }
+
 export const isValidPgn = (s: string): s is ChessPGN => {
   const instance = new Chess();
 
@@ -120,6 +137,14 @@ export const pgnToFen = (pgn: ChessPGN): ChessFEN =>
   getNewChessGame({ pgn }).fen();
 
 /**
+ * 
+ *   //  * !!! deprecate !!! deprecate !!! deprecate !!! deprecate
+  //  * deprecate the need for this!
+  //  *
+  //  * !!! This is an adapter for now but it should be removed in favor of using that directly
+  //  *
+  //  * @deprecate
+
  * This is an adapter for now but it should be removed in favor of using that directly
  *
  * @deprecate
@@ -139,3 +164,43 @@ export const localChessMoveToChessLibraryMove = ({
 
 export const getRandomColor = (): ShortChessColor =>
   (['w', 'b'] as const)[getRandomInt(0, 1)];
+
+// export const checkIsGameOverWithReason = (
+//   instance: Chess,
+//   hasTimedOut: boolean
+// ): Result<[reason: GameOverReason, isDraw: boolean], void> => {
+//   if (hasTimedOut) {
+//     console.log(
+//       'has timed out, but has insufficient material', instance.turn(),
+//       hasInsufficientMaterialToForceMate(instance.turn(), instance.fen())
+//     );
+
+//     // if () {
+//     //   return new Ok([GameOverReason['insufficientMaterial'], instance.isDraw()]);
+//     // }
+
+//     return new Ok([GameOverReason['timeout'], false]);
+//   }
+
+//   if (instance.isCheckmate()) {
+//     return new Ok([GameOverReason['checkmate'], instance.isDraw()]);
+//   }
+
+//   if (instance.isDraw()) {
+//     return new Ok([GameOverReason['draw'], true]);
+//   }
+
+//   if (instance.isInsufficientMaterial()) {
+//     return new Ok([GameOverReason['insufficientMaterial'], instance.isDraw()]);
+//   }
+
+//   if (instance.isStalemate()) {
+//     return new Ok([GameOverReason['stalemate'], instance.isDraw()]);
+//   }
+
+//   if (instance.isThreefoldRepetition()) {
+//     return new Ok([GameOverReason['threefoldRepetition'], instance.isDraw()]);
+//   }
+
+//   return Err.EMPTY;
+// };

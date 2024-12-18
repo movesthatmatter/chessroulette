@@ -1,4 +1,4 @@
-import type { BlackColor, ChessColor, ShortChessMove, WhiteColor } from '../Chess';
+import type { BlackColor, ChessColor, ShortChessMove, WhiteColor } from '../ChessRouler';
 import type { FenBoardDetailedChessMove } from '../ChessFENBoard';
 
 export type FBHBaseNonMove = {

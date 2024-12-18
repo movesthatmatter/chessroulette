@@ -1,4 +1,5 @@
 import {
+  GameOverReason,
   getNewChessGame,
   invoke,
   isOneOf,
@@ -8,13 +9,10 @@ import {
 } from '@xmatter/util-kit';
 import { initialPlayState } from './state';
 import { PlayActions } from './types';
-import { calculateTimeLeftAt, checkIsGameOverWithReason } from './util';
-import {
-  Game,
-  GameOffer,
-  GameOverReason,
-  GameStateWinner,
-} from '@app/modules/Game';
+import { calculateTimeLeftAt } from './util';
+import { Game, GameOffer, GameStateWinner } from '@app/modules/Game';
+import { ChessRouler, toShortColor } from 'util-kit/src/lib/ChessRouler';
+import { logsy } from '@app/lib/Logsy';
 
 export const reducer = (
   prev: Game = initialPlayState,
@@ -45,19 +43,20 @@ export const reducer = (
     const { lastMoveBy, pgn } = prev;
     const { moveAt } = action.payload;
 
-    const instance = getNewChessGame({ pgn });
+    const chessRouler = new ChessRouler({ pgn });
+
     try {
-      instance.move(localChessMoveToChessLibraryMove(action.payload));
-    } catch (e) {
-      console.error('Action Error:', {
+      chessRouler.move(localChessMoveToChessLibraryMove(action.payload));
+    } catch (error) {
+      logsy.error('[Play Reducer] ActionError - "Invalid Move"', {
         action,
-        prevGame: prev,
-        error: e,
+        prev,
+        error,
       });
       return prev;
     }
 
-    const turn = toLongColor(swapColor(lastMoveBy));
+    const nextLastMoveBy = toLongColor(swapColor(lastMoveBy));
 
     const commonPrevGameProps = {
       timeClass: prev.timeClass,
@@ -66,14 +65,14 @@ export const reducer = (
     } as const;
 
     const commonNextGameProps = {
-      pgn: instance.pgn(),
-      lastMoveBy: turn,
+      pgn: chessRouler.pgn(),
+      lastMoveBy: nextLastMoveBy,
       lastMoveAt: moveAt,
     } as const;
 
     if (prev.status === 'idling') {
       // The Game Status advances to "ongoing" only if both players moved
-      const canAdvanceToOngoing = instance.moveNumber() >= 2;
+      const canAdvanceToOngoing = chessRouler.moveNumber() >= 2;
 
       const nextStatus = canAdvanceToOngoing ? 'ongoing' : 'idling';
 
@@ -104,27 +103,27 @@ export const reducer = (
 
     const nextTimeLeft = calculateTimeLeftAt({
       at: moveAt,
-      turn,
+      turn: nextLastMoveBy,
       prevTimeLeft: prev.timeLeft,
     });
 
     // Prev Game Status is "Ongoing"
-    const isGameOverResult = checkIsGameOverWithReason(
-      instance,
-      prev.timeClass !== 'untimed' && nextTimeLeft[turn] < 0
+    const isGameOverResult = chessRouler.isGameOver(
+      prev.timeClass !== 'untimed' && nextTimeLeft[nextLastMoveBy] <= 0
+        ? toShortColor(nextLastMoveBy)
+        : undefined
     );
 
-    if (isGameOverResult.ok) {
-      const [gameOverReason, isDraw] = isGameOverResult.val;
+    if (isGameOverResult.over) {
       const nextWinner: GameStateWinner = invoke(() => {
         // There is no winner if the game is a draw!
-        if (isDraw) {
+        if (isGameOverResult.isDraw) {
           return '1/2';
         }
 
-        return gameOverReason === GameOverReason['timeout']
+        return isGameOverResult.reason === GameOverReason['timeout']
           ? prev.lastMoveBy
-          : turn;
+          : nextLastMoveBy;
       });
 
       // Next > "Complete"
@@ -135,7 +134,7 @@ export const reducer = (
         status: 'complete',
         winner: nextWinner,
         timeLeft: nextTimeLeft,
-        gameOverReason,
+        gameOverReason: isGameOverResult.reason,
       };
     }
 
@@ -232,21 +231,6 @@ export const reducer = (
       offers: nextOffers,
     };
   }
-
-  // TODO: This now needs to happen at MatchLevel
-  // if (action.type === 'play:acceptOfferRematch') {
-  //   // const lastOffer: GameOffer = {
-  //   //   ...prev.game.offers[prev.game.offers.length - 1],
-  //   //   status: 'accepted',
-  //   // };
-
-  //   const newGame = createPendingGame({
-  //     timeClass: prev.timeClass,
-  //     challengerColor: swapColor(prev.orientation),
-  //   });
-
-  //   return newGame;
-  // }
 
   if (action.type === 'play:acceptOfferDraw') {
     // You can only offer a draw of an ongoing game

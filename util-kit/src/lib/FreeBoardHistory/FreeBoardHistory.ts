@@ -6,7 +6,7 @@ import {
   getNewChessGame,
   isWhiteColor,
   toShortColor,
-} from '../Chess';
+} from '../ChessRouler';
 import {
   ChessFENBoard,
   detailedChessMoveToFreeBoardDetailedChessMove,

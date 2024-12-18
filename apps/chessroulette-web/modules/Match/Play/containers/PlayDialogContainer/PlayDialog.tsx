@@ -36,8 +36,6 @@ export const PlayDialog: React.FC<GameStateDialogProps> = ({
     setGameResultSeen(false);
   }, [game.status]);
 
-  console.log({ gameUsed });
-
   return invoke(() => {
     if (game.status === 'pending' && objectKeys(players || {}).length < 2) {
       return (

@@ -791,17 +791,99 @@ describe('Castling Move', () => {
   });
 });
 
-test('piece', () => {
-  const chessFenBoard = new ChessFENBoard();
+describe('pieces', () => {
+  test('piece', () => {
+    const chessFenBoard = new ChessFENBoard();
 
-  const actualWhiteBishop = chessFenBoard.piece('c1');
-  expect(actualWhiteBishop).toBe('B');
+    const actualWhiteBishop = chessFenBoard.piece('c1');
+    expect(actualWhiteBishop).toBe('B');
 
-  const actualWhitePawn = chessFenBoard.piece('a2');
-  expect(actualWhitePawn).toBe('P');
+    const actualWhitePawn = chessFenBoard.piece('a2');
+    expect(actualWhitePawn).toBe('P');
 
-  const actualBlackKing = chessFenBoard.piece('e8');
-  expect(actualBlackKing).toBe('k');
+    const actualBlackKing = chessFenBoard.piece('e8');
+    expect(actualBlackKing).toBe('k');
+  });
+});
+
+describe('getAllPicesByColor', () => {
+  test('from starting position', () => {
+    const chessFenBoard = new ChessFENBoard();
+
+    const actualWhite = chessFenBoard.getAllPiecesByColor('w');
+    expect(actualWhite).toEqual([
+      'P',
+      'P',
+      'P',
+      'P',
+      'P',
+      'P',
+      'P',
+      'P',
+      'R',
+      'N',
+      'B',
+      'Q',
+      'K',
+      'B',
+      'N',
+      'R',
+    ]);
+
+    const actualBlack = chessFenBoard.getAllPiecesByColor('b');
+    expect(actualBlack).toEqual([
+      'r',
+      'n',
+      'b',
+      'q',
+      'k',
+      'b',
+      'n',
+      'r',
+      'p',
+      'p',
+      'p',
+      'p',
+      'p',
+      'p',
+      'p',
+      'p',
+    ]);
+  });
+
+  test('just kings', () => {
+    const chessFenBoard = new ChessFENBoard(ChessFENBoard.ONLY_KINGS_FEN);
+
+    const actualWhite = chessFenBoard.getAllPiecesByColor('w');
+    expect(actualWhite).toEqual(['K']);
+
+    const actualBlack = chessFenBoard.getAllPiecesByColor('b');
+    expect(actualBlack).toEqual(['k']);
+  });
+
+  test('end game, white just king', () => {
+    const chessFenBoard = new ChessFENBoard(
+      '1n2kbnr/rbp5/4p2p/7p/8/8/2K5/8 b k - 0 19'
+    );
+
+    const actualWhite = chessFenBoard.getAllPiecesByColor('w');
+    expect(actualWhite).toEqual(['K']);
+
+    const actualBlack = chessFenBoard.getAllPiecesByColor('b');
+    expect(actualBlack).toEqual([
+      'n',
+      'k',
+      'b',
+      'n',
+      'r',
+      'r',
+      'b',
+      'p',
+      'p',
+      'p',
+      'p',
+    ]);
+  });
 });
 
 describe('Validate FEN', () => {

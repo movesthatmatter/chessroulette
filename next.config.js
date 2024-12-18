@@ -11,8 +11,8 @@ module.exports = withSentryConfig(
 
     // Suppresses source map uploading logs during build
     silent: true,
-    org: "chessroulette-16",
-    project: "chessroulette-web-v2",
+    org: "chessroulette-live",
+    project: "chessroulette",
   },
   {
     // For all available options, see:

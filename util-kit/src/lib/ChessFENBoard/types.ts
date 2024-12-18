@@ -5,7 +5,7 @@ import {
   ChessColor,
   ShortChessMove,
   WhiteColor,
-} from '../Chess/types';
+} from '../ChessRouler/types';
 
 export type AbsoluteCoord = {
   x: number;

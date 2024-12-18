@@ -1,11 +1,10 @@
 import {
   Game,
-  GameOverReason,
   GameTimeClass,
   OngoingGame,
 } from '@app/modules/Game';
 import { applyActionsToReducer } from '@app/lib/util';
-import { invoke } from '@xmatter/util-kit';
+import { GameOverReason, invoke } from '@xmatter/util-kit';
 import { createMatchState } from './operations/operations';
 import { reducer as matchReducer } from './reducer';
 import { MatchState } from './types';

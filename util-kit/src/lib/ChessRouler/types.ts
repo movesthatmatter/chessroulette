@@ -73,3 +73,15 @@ export type PromotionalPieceSan = Exclude<PieceSan, 'wP' | 'wK' | 'bP' | 'bK'>;
 // export type ChessArrowId = `${Square}${Square}-${string}`;
 export type ChessArrowId = string;
 export type ChessCircleId = string;
+
+export enum GameOverReason {
+  'timeout',
+  'checkmate',
+  'draw',
+  'stalemate',
+  'insufficientMaterial',
+  'threefoldRepetition',
+  'resignation',
+  'acceptedDraw',
+  'aborted',
+}

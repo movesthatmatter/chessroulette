@@ -1,6 +1,6 @@
 import { deepmerge } from 'deepmerge-ts';
-import { getNewChessGame, isShortChessColor, toShortColor } from '../Chess/lib';
-import type { ChessFEN, ChessFENStateNotation } from '../Chess/types';
+import { getNewChessGame, isShortChessColor, toShortColor } from '../ChessRouler/lib';
+import type { ChessFEN, ChessFENStateNotation } from '../ChessRouler/types';
 import type {
   FENBoard,
   FenBoardPieceSymbol,
@@ -12,13 +12,20 @@ import {
   emptyBoard,
   fenBoardPieceSymbolToDetailedChessPiece,
   getFileRank,
+  isPieceSymbolOfColor,
+  isUpperCase,
   matrixIndexToSquare,
   swapColor,
 } from './util';
 import { SQUARES, type Color, type Square } from 'chess.js';
 import { Err, Ok, Result } from 'ts-results';
 import type { DeepPartial } from '../miscType';
-import { duplicateMatrix, matrixFind, printMatrix } from '../matrix';
+import {
+  duplicateMatrix,
+  matrixFind,
+  matrixReduce,
+  printMatrix,
+} from '../matrix';
 
 export type FenState = {
   turn: Color;
@@ -863,6 +870,20 @@ export class ChessFENBoard {
     });
 
     return square;
+  }
+
+  getAllPiecesByColor(color: Color): FenBoardPieceSymbol[] {
+    return matrixReduce(
+      this.board,
+      (prev, next) => {
+        if (!next) {
+          return prev;
+        }
+
+        return isPieceSymbolOfColor(color, next) ? [...prev, next] : prev;
+      },
+      [] as FenBoardPieceSymbol[]
+    );
   }
 
   static extractFenStateString = (fen: ChessFEN) => {
