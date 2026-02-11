@@ -1,81 +1,53 @@
-# Chessroulette
+# Next.js & HeroUI Template
 
-Chessroulette is an online platform that combines chess gameplay with real-time video interaction. It allows you to play one-on-one matches with friends or new opponents, join virtual classrooms for studying chess with instructors, and connect through video chat while playing. Designed to make online chess more interactive and personal, Chess Roulette helps players learn, play, and connect with ease.
+This is a template for creating applications using Next.js 14 (app directory) and HeroUI (v2).
 
+[Try it on CodeSandbox](https://githubbox.com/heroui-inc/heroui/next-app-template)
 
-<div align="center">
+## Technologies Used
 
-[![License][license-image]][license-url]
-[![contributions welcome](https://img.shields.io/badge/contributions-welcome-brightgreen.svg?style=flat)](https://github.com/movesthatmatter/chessroulette/issues)
+- [Next.js 14](https://nextjs.org/docs/getting-started)
+- [HeroUI v2](https://heroui.com/)
+- [Tailwind CSS](https://tailwindcss.com/)
+- [Tailwind Variants](https://tailwind-variants.org)
+- [TypeScript](https://www.typescriptlang.org/)
+- [Framer Motion](https://www.framer.com/motion/)
+- [next-themes](https://github.com/pacocoursey/next-themes)
 
+## How to Use
 
-[license-image]: https://img.shields.io/badge/license-MIT-green
-[license-url]: https://github.com/movesthatmatter/chessroulette/blob/main/LICENSE
+### Use the template with create-next-app
 
-</div>
+To create a new project based on this template using `create-next-app`, run the following command:
 
-## 🙏 Contributing
-
-First off, thank you for showing an interest in contributing to the Chessroulette project! We have created a [Contributing Guide](https://github.com/movesthatmatter/chessroulette/blob/main/CONTRIBUTING.md) that will show you how to setup a development environment and how to open pull requests and submit changes.
-
-## 💾 Project Setup
-
-Chessroulette is using a handful of services to function properly.
-
-<a href="https://movex.dev" target="_blank">
-  <picture width="200">
-    <source media="(prefers-color-scheme: dark)" srcset="https://user-images.githubusercontent.com/2099521/242976573-84d1ea96-1859-43a7-ac0c-d2f1e0f1b882.png" width="200">
-    <img alt="Movex Logo" src="https://user-images.githubusercontent.com/2099521/242976534-60d063cd-3283-45e3-aac5-bd8ed0eb8946.png" width="200">
-  </picture>
-</a>
-
-- __Movex__: The Multiplayer Infrastructure. Learn more at [movex.dev](https://movex.dev).
-  
-- __Turn Server__: Ensuring the WebRTC connects even behind firewals or complex network systems via [Twilio](https://www.twilio.com).
-- __Signaling Server__: Providing the WebRTC handshaking mechanism via [Peerjs](https://github.com/peers/peerjs).
-- __Chess Engine Server__: Stockfish, Leela, etc.
-
-### 🚀 Build & Run
-
-1. Install the Dependencies 
 ```bash
-yarn
+npx create-next-app -e https://github.com/heroui-inc/next-app-template
 ```
 
-1. Create an Env file `.env.local` at the project root, and duplicate the sample variables found at `sample.env` into it. Replace the "TBD" values with your own tokens!
-   
+### Install dependencies
+
+You can use one of them `npm`, `yarn`, `pnpm`, `bun`, Example using `npm`:
+
 ```bash
-touch .env.file; cat sample.env > .env.file
+npm install
 ```
 
-1. Start the Client
+### Run the development server
+
 ```bash
-yarn start:client
+npm run dev
 ```
 
-1. In a separate Terminal, start the Server (Movex)
+### Setup pnpm (optional)
+
+If you are using `pnpm`, you need to add the following code to your `.npmrc` file:
+
 ```bash
-yarn start:movex
+public-hoist-pattern[]=*@heroui/*
 ```
 
-1. Navigate to `localhost:4200` and enjoy your experience!
+After modifying the `.npmrc` file, you need to run `pnpm install` again to ensure that the dependencies are installed correctly.
 
+## License
 
-## 🛡️ License
-
-Movex is licensed under the MIT License - see the [LICENSE](https://github.com/movesthatmatter/movex/blob/main/LICENSE) file for details.
-
-
-## 👽 Community
-
-[Join our Discord](https://discord.gg/hudVbHH4m8)
-
-## 🥷 Thanks To All Contributors
-
-Movex wouldn't be the same without you, so thank you all for your amazing efforts and contribution! 
-
-<a href="https://github.com/movesthatmatter/chessroulette/graphs/contributors">
-  <img src="https://contrib.rocks/image?repo=movesthatmatter/chessroulette&v=2" alt="Contributors" />
-</a>
-
-Made with [contrib.rocks](https://contrib.rocks).
+Licensed under the [MIT license](https://github.com/heroui-inc/next-app-template/blob/main/LICENSE).
