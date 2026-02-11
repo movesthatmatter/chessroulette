@@ -1,3 +1,5 @@
+console.log("heree");
+
 import { reducer as roomReducer } from '@/modules/Room/movex';
 import { config } from './config';
 import { reducerLogger } from './lib/util';
