@@ -72,6 +72,7 @@ export type UserData = {
   new_product_id?: string;
   subscriptionProduct?: string;
   user_id: string;
+  isLoaded?: boolean; // getSubscribeInfo se vratio
 };
 export type ChapterState = {
   name: string;

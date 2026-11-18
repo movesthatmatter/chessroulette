@@ -89,6 +89,7 @@ export const LearnAiActivity = ({
     user_id: '',
     new_product_id: '',
     subscriptionProduct: '',
+    isLoaded: false,
   });
   console.log('userData', userData);
   const settings = useLearnAiActivitySettings();
@@ -120,7 +121,7 @@ export const LearnAiActivity = ({
   }, []);
 
   const getUserData = async () => {
-    const data = await getSubscribeInfo();
+    const data = await getSubscribeInfo().catch(() => null); // i greska zavrsava ucitavanje
     setUserData({
       name_first: data?.name_first,
       name_last: data?.name_last,
@@ -129,6 +130,7 @@ export const LearnAiActivity = ({
       user_id: data?.user_id,
       new_product_id: data?.new_product_id,
       subscriptionProduct: getProductLabel(data ?? {}),
+      isLoaded: true,
     });
   };
   const onCanPlayChange = (canPlay: boolean) => {

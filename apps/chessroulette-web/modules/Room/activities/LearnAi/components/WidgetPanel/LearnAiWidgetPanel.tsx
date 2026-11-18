@@ -528,6 +528,7 @@ export const LearnAiWidgetPanel = React.forwardRef<TabsRef, Props>(
 
     const hasAutoOpenedFromUrlRef = useRef(false);
     useEffect(() => {
+      if (!userData?.isLoaded) return; // cekaj proveru pretplate
       if (hasAutoOpenedFromUrlRef.current) return;
       if (currentChapterState.aiLearn.name) return;
 
@@ -563,7 +564,7 @@ export const LearnAiWidgetPanel = React.forwardRef<TabsRef, Props>(
         name: family.name,
         pgn: `[Event "?"]\n[Site "?"]\n\n${chess.pgn()}`,
       });
-    }, [currentChapterState.aiLearn.name]);
+    }, [currentChapterState.aiLearn.name, userData?.isLoaded]);
 
     const handleSomethingElse = async () => {
       // Old: ask user to type name

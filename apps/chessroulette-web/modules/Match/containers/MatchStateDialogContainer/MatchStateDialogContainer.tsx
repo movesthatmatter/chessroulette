@@ -424,6 +424,7 @@ export const MatchStateDialogContainer: React.FC<Props> = ({
   if (match?.status === 'aborted') {
     return (
       <Dialog
+        dim="strong"
         title="Match Aborted"
         content={
           <>
@@ -483,6 +484,7 @@ export const MatchStateDialogContainer: React.FC<Props> = ({
     return (
       <>
         <Dialog
+          dim="strong"
           title={`${endGameReason}`}
           hasCloseButton
           compactHeader
@@ -569,11 +571,11 @@ export const MatchStateDialogContainer: React.FC<Props> = ({
                       <Button
                         icon="MagnifyingGlassIcon"
                         bgColor="green"
-                        className="transition-all text-black  duration-200 w-full hover:border-green-600 hover:scale-[1.0] hover:shadow-[0_0_16px_rgba(7,218,99,0.35)] bg-green-600"
+                        className="transition-all text-black  duration-200 w-full hover:border-green-600 bg-green-600 animate-reviewPulse"
                         style={{ minWidth: '160px', color: '#000' }}
                         onClick={() => {}}
                       >
-                        Review
+                        AI Coach Review
                       </Button>
                     </Link>
 
@@ -728,6 +730,7 @@ export const MatchStateDialogContainer: React.FC<Props> = ({
 
     return (
       <Dialog
+        dim="strong"
         title={
           match.type === 'bestOf'
             ? `Game ${matchView.endedGamesCount} Ended${titleSuffix}`
