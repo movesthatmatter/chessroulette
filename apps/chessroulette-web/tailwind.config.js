@@ -109,6 +109,15 @@ module.exports = {
             boxShadow: '0 0 22px 8px rgba(7,218,99,0.75)',
           },
         },
+        // isto kao hero-glow-pulse u LearnAi.vue (Review na kraju meca)
+        reviewPulse: {
+          '0%, 100%': {
+            boxShadow: '0 0 10px rgba(7,218,99,0.5)',
+          },
+          '50%': {
+            boxShadow: '0 0 22px rgba(7,218,99,0.85)',
+          },
+        },
         progressPop: {
           '0%, 100%': {
             transform: 'scaleY(1)',
@@ -141,6 +150,7 @@ module.exports = {
         fadeIn: 'fadeIn 0.4s ease-out forwards',
         attentionPulse: 'attentionPulse 1.2s ease-in-out infinite',
         progressPop: 'progressPop 1.2s ease-in-out infinite',
+        reviewPulse: 'reviewPulse 2.2s ease-in-out infinite',
         // sublevelBlink: 'sublevelBlink 0.45s ease-out'
       },
     },

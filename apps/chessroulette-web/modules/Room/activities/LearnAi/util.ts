@@ -220,7 +220,7 @@ function looksLikeSanMove(word: string): boolean {
 }
 
 export function parseMessageMoves(content: string): MessageMoveSegment[] {
-  const moveRegex = /(\d+\.(?:\.\.)?\s*[^\s\[\]]+)/g;
+  const moveRegex = /(\d+\.(?:\.\.)?[ \t]*[^\s\[\]]+)/g; // ne prelazi u novi red
   const moveSegments: Array<{
     start: number;
     end: number;
@@ -231,7 +231,11 @@ export function parseMessageMoves(content: string): MessageMoveSegment[] {
   let match: RegExpExecArray | null;
   while ((match = moveRegex.exec(content)) !== null) {
     const fullMatch = match[0];
-    const numMatch = fullMatch.match(/^(\d+)\.(\.\.)?\s*(.*)$/);
+    const prevChar = content[match.index - 1];
+    if (prevChar && /[A-Za-z0-9]/.test(prevChar)) continue; // npr. "Bb7." nije broj poteza
+    const numMatch = fullMatch.match(/^(\d+)\.(\.\.)?[ \t]*(.*)$/);
+    const san = (numMatch?.[3] ?? '').replace(/[.,;:!?)]+$/, '');
+    if (!looksLikeSanMove(san)) continue; // posle broja mora potez
     const moveNumber = numMatch ? parseInt(numMatch[1], 10) : 1;
     const isBlack = !!numMatch?.[2];
     moveSegments.push({
@@ -243,7 +247,7 @@ export function parseMessageMoves(content: string): MessageMoveSegment[] {
     });
     if (!isBlack) {
       const after = content.slice(match.index + fullMatch.length);
-      const inlineBlack = after.match(/^\s+([^\s\[\]]+)/);
+      const inlineBlack = after.match(/^[ \t]+([^\s\[\]]+)/);
       if (inlineBlack && looksLikeSanMove(inlineBlack[1])) {
         const blackValue = inlineBlack[1];
         const blackStart = match.index + fullMatch.length;
