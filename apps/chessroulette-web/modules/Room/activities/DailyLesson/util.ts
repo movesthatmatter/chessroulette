@@ -1,5 +1,6 @@
 import Cookies from 'js-cookie';
 import type { IllegalMoveReason } from './lessonEngine';
+import type { Lesson } from './lessonDatabase';
 
 export type MessageMoveSegment =
   | { type: 'text'; value: string; start: number; end: number }
@@ -255,7 +256,8 @@ export function pickHintHelpMessage(lastContent?: string): string {
   const candidates = GENERIC_HINT_HELP_VARIANTS.filter(
     (text) => text !== lastContent
   );
-  const options = candidates.length > 0 ? candidates : GENERIC_HINT_HELP_VARIANTS;
+  const options =
+    candidates.length > 0 ? candidates : GENERIC_HINT_HELP_VARIANTS;
   return options[Math.floor(Math.random() * options.length)];
 }
 
@@ -287,7 +289,7 @@ export function illegalMoveMessage(
     blocked: `Something's in the way. The ${name} can't jump. Only Knights get to do that.`,
     pawnCaptureEmpty: `Pawns go diagonal only to capture. ${to} is empty.`,
     pawnBlocked: `Pawns can't capture straight ahead. The path to ${to} is blocked.`,
-    pawnDoubleStep: '2 squares only works on a Pawn\'s first move.',
+    pawnDoubleStep: "2 squares only works on a Pawn's first move.",
     pawnBackward: 'Pawns only go forward. No retreats.',
     pieceShape:
       {
@@ -295,10 +297,111 @@ export function illegalMoveMessage(
         n: 'Knights move in an L. 2 squares one way, then 1 to the side.',
         b: 'Bishops stay on diagonals. No straight lines.',
         r: 'Rooks move in straight lines. Up, down, left, right. No diagonals.',
-        q: "The Queen goes straight or diagonal. The L belongs to the Knight.",
+        q: 'The Queen goes straight or diagonal. The L belongs to the Knight.',
         k: 'The King moves 1 square at a time. Any direction.',
       }[pieceType] ?? "That piece doesn't move like that.",
   };
   const dots = hasLegalTargets ? ' The dots show where it can go.' : '';
   return `${text[reason]}${dots}`;
+}
+
+/**
+ * Zakljucavanje lekcija. Dok lekcije pravimo i proveravamo, sve su otvorene
+ * svima; pre produkcije prebaciti na false.
+ */
+export const LESSONS_UNLOCK_ALL = true;
+/** PRO korisnik otvara najvise ovoliko novih lekcija dnevno. */
+export const LESSONS_PER_DAY = 1;
+
+const LESSON_PROGRESS_KEY = 'outpost.dailyLessons.completed';
+
+/** lessonId -> datum zavrsetka (YYYY-MM-DD, lokalno vreme). */
+export type LessonProgress = Record<string, string>;
+
+const toDayKey = (d: Date) =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(
+    d.getDate()
+  ).padStart(2, '0')}`;
+
+// Za sada samo u browseru (localStorage); backend za napredak ne postoji.
+export function readLessonProgress(): LessonProgress {
+  try {
+    const raw = window.localStorage.getItem(LESSON_PROGRESS_KEY);
+    return raw ? (JSON.parse(raw) as LessonProgress) : {};
+  } catch {
+    return {};
+  }
+}
+
+export function markLessonCompleted(lessonId: string) {
+  try {
+    const progress = readLessonProgress();
+    if (progress[lessonId]) return;
+    progress[lessonId] = toDayKey(new Date());
+    window.localStorage.setItem(LESSON_PROGRESS_KEY, JSON.stringify(progress));
+  } catch {
+    // localStorage nedostupan (privatni prozor) - napredak se ne pamti.
+  }
+}
+
+export type LessonAccessStatus = 'done' | 'next' | 'tomorrow' | 'locked';
+
+/**
+ * Status svake lekcije po redu: zavrsene su uvek otvorene, prva nezavrsena je
+ * "next" dok dnevni limit nije potrosen (inace "tomorrow"), ostale su zakljucane.
+ * Bez PRO-a nista nije otvoreno. `unlockAll` otvara sve (admin).
+ */
+export function getLessonAccess(
+  lessonIds: string[],
+  progress: LessonProgress,
+  isPro: boolean,
+  unlockAll = LESSONS_UNLOCK_ALL,
+  now = new Date()
+) {
+  const today = toDayKey(now);
+  const doneToday = Object.values(progress).filter((d) => d === today).length;
+  const nextIndex = lessonIds.findIndex((id) => !progress[id]);
+
+  return lessonIds.map((id, i) => {
+    const status: LessonAccessStatus = progress[id]
+      ? 'done'
+      : i !== nextIndex
+      ? 'locked'
+      : doneToday >= LESSONS_PER_DAY
+      ? 'tomorrow'
+      : 'next';
+    const canOpen =
+      unlockAll || (isPro && (status === 'done' || status === 'next'));
+    return { id, status, canOpen };
+  });
+}
+
+/** Lesson.pawnyRating - rejting T za jednu partiju, ravnomerno u [min, max]. */
+export function rollPawnyRating(lesson: Lesson | null): number | null {
+  const cfg = lesson?.pawnyRating;
+  if (!cfg) return null;
+  return Math.round(cfg.min + Math.random() * (cfg.max - cfg.min));
+}
+
+/** Zamenjuje {rating} u tekstovima lekcije koje korisnik vidi. */
+export function withPawnyRating<T extends Lesson | null>(
+  lesson: T,
+  rating: number | null
+): T {
+  if (!lesson || !lesson.pawnyRating) return lesson;
+  const fill = (text?: string) =>
+    text
+      ?.split('{rating}')
+      .join(rating == null ? '' : rating.toLocaleString('en-US'));
+  return {
+    ...lesson,
+    endScreenTitle: fill(lesson.endScreenTitle),
+    piece: {
+      ...lesson.piece,
+      bannerText: fill(lesson.piece.bannerText),
+      subBannerText: fill(lesson.piece.subBannerText),
+    },
+    intro: lesson.intro && { ...lesson.intro, text: fill(lesson.intro.text)! },
+    introSteps: lesson.introSteps?.map((s) => ({ ...s, text: fill(s.text)! })),
+  };
 }

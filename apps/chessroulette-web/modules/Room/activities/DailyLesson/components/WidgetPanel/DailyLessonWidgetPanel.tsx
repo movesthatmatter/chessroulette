@@ -22,6 +22,130 @@ import { FreePlayControls } from './FreePlayControls';
  */
 const AUTO_ADVANCE_MS = 6000;
 
+const TRAIL_STROKE = 2;
+// Prsten oko dugmeta, px van njegove ivice.
+const RING_OFFSET = 4;
+const SPARKS = [
+  { left: '6%', top: '-40%', delay: 0, color: '#64D771' },
+  { left: '30%', top: '120%', delay: 0.6, color: '#11C6D1' },
+  { left: '58%', top: '-55%', delay: 1.1, color: '#ffffff' },
+  { left: '86%', top: '115%', delay: 0.3, color: '#64D771' },
+  { left: '102%', top: '10%', delay: 1.5, color: '#11C6D1' },
+  { left: '-8%', top: '70%', delay: 0.9, color: '#ffffff' },
+];
+
+/**
+ * "Upaljeno" dugme kad korisnik igra na tabli umesto da klikne: sjaj na
+ * dugmetu, prsten sa svetlom koje kruzi, oreol i iskrice. Meri pravu
+ * velicinu i zaobljenje roditeljskog dugmeta.
+ */
+const NudgeGlow = () => {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [box, setBox] = useState<{ w: number; h: number; r: number } | null>(
+    null
+  );
+
+  useEffect(() => {
+    const host = ref.current?.parentElement;
+    if (!host) return;
+    const measure = () => {
+      const r = parseFloat(getComputedStyle(host).borderTopLeftRadius) || 0;
+      setBox({ w: host.offsetWidth, h: host.offsetHeight, r });
+    };
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(host);
+    return () => ro.disconnect();
+  }, []);
+
+  const inset = TRAIL_STROKE / 2;
+  const ringW = box ? box.w + RING_OFFSET * 2 - TRAIL_STROKE : 0;
+  const ringH = box ? box.h + RING_OFFSET * 2 - TRAIL_STROKE : 0;
+  const ringRx = box
+    ? Math.max(0, Math.min(box.r + RING_OFFSET - inset, ringH / 2, ringW / 2))
+    : 0;
+
+  return (
+    <span
+      ref={ref}
+      aria-hidden
+      className="dl-nudge pointer-events-none absolute inset-0"
+      style={{ borderRadius: 'inherit' }}
+    >
+      <span className="dl-nudge-halo absolute" />
+      <span
+        className="absolute inset-0"
+        style={{
+          borderRadius: 'inherit',
+          background:
+            'linear-gradient(180deg, rgba(255,255,255,.32) 0%, rgba(255,255,255,0) 50%)',
+          boxShadow:
+            'inset 0 1px 0 rgba(255,255,255,.65), inset 0 -3px 8px rgba(0,90,45,.28)',
+        }}
+      />
+      {SPARKS.map((sp, i) => (
+        <span
+          key={i}
+          className="dl-nudge-spark absolute"
+          style={{
+            left: sp.left,
+            top: sp.top,
+            background: sp.color,
+            boxShadow: `0 0 6px ${sp.color}`,
+            animationDelay: `${sp.delay}s`,
+          }}
+        />
+      ))}
+      {box && (
+        <svg
+          className="absolute overflow-visible"
+          style={{ left: -RING_OFFSET, top: -RING_OFFSET }}
+          width={box.w + RING_OFFSET * 2}
+          height={box.h + RING_OFFSET * 2}
+        >
+          <rect
+            x={inset}
+            y={inset}
+            width={ringW}
+            height={ringH}
+            rx={ringRx}
+            fill="none"
+            stroke="rgba(100, 215, 113, 0.45)"
+            strokeWidth={1.5}
+          />
+          <rect
+            className="dl-trail-dash"
+            x={inset}
+            y={inset}
+            width={ringW}
+            height={ringH}
+            rx={ringRx}
+            pathLength={100}
+            fill="none"
+            stroke="#ffffff"
+            strokeWidth={TRAIL_STROKE}
+            strokeLinecap="round"
+          />
+        </svg>
+      )}
+      <style>{`
+        @keyframes dl-trail { from { stroke-dashoffset: 0; } to { stroke-dashoffset: -100; } }
+        @keyframes dl-ignite { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: scale(1); } }
+        @keyframes dl-breathe { 0%, 100% { opacity: .65; } 50% { opacity: 1; } }
+        @keyframes dl-spark { 0% { opacity: 0; transform: translateY(4px) scale(.6); } 40% { opacity: 1; } 100% { opacity: 0; transform: translateY(-10px) scale(1); } }
+        .dl-nudge { animation: dl-ignite .35s ease-out both; }
+        .dl-nudge-halo { left: -45%; right: -45%; top: -140%; bottom: -140%; z-index: -1; border-radius: 9999px;
+          background: radial-gradient(closest-side, rgba(7,218,99,.42), rgba(17,198,209,.14) 60%, transparent);
+          filter: blur(6px); animation: dl-breathe 2.6s ease-in-out infinite; }
+        .dl-nudge-spark { width: 3px; height: 3px; border-radius: 9999px; animation: dl-spark 2.2s ease-out infinite; }
+        .dl-trail-dash { stroke-dasharray: 14 86; animation: dl-trail 3s linear infinite;
+          filter: drop-shadow(0 0 3px rgba(255,255,255,.9)) drop-shadow(0 0 6px rgba(100,215,113,.8)); }
+        @media (prefers-reduced-motion: reduce) { .dl-nudge, .dl-nudge-halo, .dl-nudge-spark, .dl-trail-dash { animation: none; } }
+      `}</style>
+    </span>
+  );
+};
+
 export type DailyLessonWidgetPanelProps = {
   userData: UserData;
   currentChapterState: ChapterState;
@@ -52,10 +176,14 @@ export type DailyLessonWidgetPanelProps = {
   onHistoryNotationRefocus: FreeBoardNotationProps['onRefocus'];
   /** Kviz pitanje (kind:'quiz') - korisnik bira jedno od 4 ponudjena dugmeta. */
   onSelectQuizAnswer: (index: number) => void;
+  /** quizMoveOptions - opcija odgovorena potezom na tabli, oznaci je i ovde. */
+  boardQuizAnswer?: number | null;
   /** LessonStep.quizMultiSelect (Day 31) - poziva se TEK kad je izabrano tacno onoliko opcija koliko quizCorrectIndices trazi. */
   onSelectMultiQuizAnswer?: (indices: number[]) => void;
   /** step.suggestedMove (Day 17) - klik na potez u chatu, umesto prevlacenja. */
   onPlaySuggestedMove: (uci: string) => void;
+  /** LessonStep.suggestSolutionMoves - sledeci potez iz linije, dugme ispod poslednje poruke. */
+  nextSolutionMove?: { uci: string; label: string } | null;
   /** kind:'freePlay' (Day 14) - zamenjuju Next dugme, vidi FreePlayControls. */
   onDrawOffer: () => void;
   onTakeBack: () => void;
@@ -85,8 +213,10 @@ export const DailyLessonWidgetPanel = ({
   onMessage,
   onHistoryNotationRefocus,
   onSelectQuizAnswer,
+  boardQuizAnswer = null,
   onSelectMultiQuizAnswer,
   onPlaySuggestedMove,
+  nextSolutionMove,
   onDrawOffer,
   onTakeBack,
   onResign,
@@ -101,6 +231,9 @@ export const DailyLessonWidgetPanel = ({
   useEffect(() => {
     setQuizSelectedIndex(null);
   }, [step?.id]);
+  useEffect(() => {
+    if (boardQuizAnswer !== null) setQuizSelectedIndex(boardQuizAnswer);
+  }, [boardQuizAnswer]);
   const handleQuizAnswer = useCallback(
     (index: number) => {
       if (quizSelectedIndex !== null) return;
@@ -299,6 +432,8 @@ export const DailyLessonWidgetPanel = ({
   // Mobilni: Hint/Next red ide desno od progress trake umesto iznad chata -
   // chat dobija tu visinu. freePlay (Day 14) nema traku, pa ostaje kako je bio.
   const buttonsBesideProgress = isMobile && step?.kind !== 'freePlay';
+  // quizAnswerViaNextButton - pre odgovora Next dugme JE odgovor (npr. 'Show me')
+  const answerViaNext = !!step?.quizAnswerViaNextButton && !isStepComplete;
 
   const buttonsRow = (
     <div
@@ -310,10 +445,8 @@ export const DailyLessonWidgetPanel = ({
             }`
       }
     >
-      {/* step.liveHint (Day 20 Phase 2) renders Hint INSIDE
-          FreePlayControls dole umesto ovde (isti vizuelni jezik kao
-          Take Back, u mestu koje Draw/Resign oslobode) - ne duplirati. */}
-      {step?.kind !== 'freePlay' &&
+      {/* freePlay sa liveHint dobija isto standardno Hint dugme kao ostale lekcije. */}
+      {(step?.kind !== 'freePlay' || !!step?.liveHint) &&
         (step?.kind !== 'quiz' || !!step?.extraHintText) && (
           <ButtonGreen
             onClick={onHint}
@@ -363,7 +496,20 @@ export const DailyLessonWidgetPanel = ({
             <p className="whitespace-nowrap">Repeat</p>
           </ButtonGreen>
         </>
-      ) : step?.kind === 'freePlay' ? (
+      ) : step?.kind === 'freePlay' && step.freePlayGoal && !isStepComplete ? (
+        // Lessons 2 Day 8 - isti par dugmadi kao Hint/Next u ostalim lekcijama; posle dame Next (Day 27).
+        <ButtonGreen
+          onClick={onTakeBack}
+          icon="ArrowUturnLeftIcon"
+          iconKind="outline"
+          size="md"
+          className="md:max-w-[130px] max-w-[130px] px-4"
+          style={{ maxWidth: smallMobile ? '90px' : '' }}
+          disabled={isBusy || !canTakeBack}
+        >
+          <p className="whitespace-nowrap">Take Back</p>
+        </ButtonGreen>
+      ) : step?.kind === 'freePlay' && !step.freePlayGoal ? (
         <FreePlayControls
           onDrawOffer={onDrawOffer}
           onTakeBack={onTakeBack}
@@ -375,14 +521,13 @@ export const DailyLessonWidgetPanel = ({
           // pravo ogranicenje (nema sta da se vrati).
           disabled={false}
           canTakeBack={canTakeBack}
-          hideDrawResign={!!step?.requireCheckmate}
-          showHint={!!step?.liveHint}
-          onHint={onHint}
-          hintLoading={liveHintLoading}
+          hideDrawResign={!!step?.requireCheckmate || !!step?.freePlayGoal}
         />
       ) : (
         <ButtonGreen
-          onClick={handleNextClick}
+          onClick={
+            answerViaNext ? () => onSelectQuizAnswer(0) : handleNextClick
+          }
           icon="ArrowRightIcon"
           iconKind="outline"
           iconClassName="relative z-10"
@@ -392,7 +537,7 @@ export const DailyLessonWidgetPanel = ({
           className={`${
             buttonsBesideProgress ? '' : 'md:max-w-[130px] max-w-[130px]'
           } px-4 transition-[filter,transform] duration-150 hover:brightness-110 hover:scale-[1.03] active:scale-[0.97] hover:[animation-play-state:paused] ${
-            nextReady || nudgeNext ? 'animate-attentionPulse' : ''
+            nextReady ? 'animate-attentionPulse' : ''
           }`}
           style={{
             maxWidth: smallMobile && !buttonsBesideProgress ? '90px' : '',
@@ -403,7 +548,9 @@ export const DailyLessonWidgetPanel = ({
               ? { backgroundColor: 'rgba(7, 218, 99)', color: '#000000' }
               : {}),
           }}
-          disabled={isBusy || !isStepComplete || isLastStep}
+          disabled={
+            answerViaNext ? isBusy : isBusy || !isStepComplete || isLastStep
+          }
         >
           {nextReady && (
             <div className="absolute inset-0 rounded-2xl overflow-hidden pointer-events-none">
@@ -418,9 +565,13 @@ export const DailyLessonWidgetPanel = ({
                 `}</style>
             </div>
           )}
+          {/* Korisnik igra na tabli umesto da klikne - svetlo putuje po ivici dugmeta. */}
+          {nudgeNext && !nextReady && <NudgeGlow />}
           <p className="relative whitespace-nowrap">
-            {(buttonsBesideProgress && step?.nextButtonTextMobile) ||
-              (step?.nextButtonText ?? 'Next')}
+            {answerViaNext
+              ? step?.quizOptions?.[0]
+              : (buttonsBesideProgress && step?.nextButtonTextMobile) ||
+                (step?.nextButtonText ?? 'Next')}
           </p>
         </ButtonGreen>
       )}
@@ -480,6 +631,8 @@ export const DailyLessonWidgetPanel = ({
                 onToggleMultiOption={handleToggleMultiOption}
                 suggestedMovePlayed={suggestedMovePlayed}
                 onPlaySuggestedMove={handlePlaySuggestedMove}
+                nextSolutionMove={nextSolutionMove}
+                onPlayNextSolutionMove={onPlaySuggestedMove}
                 pawnyAvatarSrc={lesson?.pawnyAvatar}
                 disableStickyQuizQuestion={!!lesson?.graduationTest}
               />

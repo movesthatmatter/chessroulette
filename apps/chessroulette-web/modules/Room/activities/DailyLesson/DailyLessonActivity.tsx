@@ -8,9 +8,12 @@ import {
   ShortChessMove,
 } from '@xmatter/util-kit';
 import { PanelResizeHandle } from 'react-resizable-panels';
+import confetti from 'canvas-confetti';
+import { ButtonGreen } from '@app/components/Button/ButtonGreen';
 import movexConfig from '@app/movex.config';
 import { ResizableDesktopLayout } from '@app/templates/ResizableDesktopLayout';
 import { ArrowsMap } from '@app/components/Chessboard/types';
+import { useBoardTheme } from '@app/components/Chessboard/hooks/useBoardTheme';
 import { getProductLabel } from '@app/modules/User';
 import { getRandomStr } from '@app/util';
 
@@ -19,10 +22,13 @@ import {
   enqueueMovexUpdate,
   getSubscribeInfo,
   illegalMoveMessage,
+  markLessonCompleted,
   pickHintHelpMessage,
   pickVariedMessage,
   pickVariedWrongMoveMessage,
+  rollPawnyRating,
   shuffleFrom,
+  withPawnyRating,
 } from './util';
 import { DailyLessonDialogContainer } from './DialogContainer/DailyLessonDialogContainer';
 import {
@@ -40,6 +46,7 @@ import {
   MAX_HINTS_PER_STEP,
 } from './lessonDatabase';
 import {
+  analyzePosition,
   buildCrosshairArrows,
   buildSolutionArrow,
   computeLinePath,
@@ -52,6 +59,7 @@ import {
   kingApproachTarget,
   knightElbowSquare,
   movesMatch,
+  centerControlHighlight,
   resolveSolutionMove,
   pieceAt,
   pieceLegalTargets,
@@ -78,6 +86,9 @@ const COACH = 'chatGPT123456';
 // animaciju umesto zelenog loga. Vidi PAWNY_AVATAR_FRAMES tamo.
 const PAWNY = 'pawny-bot';
 const OPPONENT_REPLY_DELAY_MS = 450;
+// Zavrsna animacija (quizDemoLine focus): ulazak table u prvi plan i zadrzavanje posle proslave.
+const BOARD_FOCUS_TRANSITION_MS = 750;
+const BOARD_FOCUS_HOLD_MS = 1800;
 // step.moveHighlights pre protivnikovog odgovora - dodatno zadrzavanje (uz
 // OPPONENT_REPLY_DELAY_MS) da se strelica saha stigne videti dok je kralj
 // jos na napadnutom polju.
@@ -95,6 +106,16 @@ const MARK_SELECT_COLOR = '#11C6D1';
 // figure ispod i dalje vide - isto vizuelno jezik kao lichess "last move".
 const ROOK_RANK_CUTOFF_COLOR = 'rgba(155, 199, 0, .41)';
 const ROOK_RANK_CHECK_COLOR = 'rgba(7, 218, 99, .38)';
+// Boje znakova uz potez na tabli, iste kao na Lichess-u.
+const MOVE_GLYPH_COLORS: Record<string, string> = {
+  '!!': '#22ac38',
+  '!': '#629924',
+  '!?': '#ea45d8',
+  '?!': '#56b4e9',
+  '?': '#e69f00',
+  '??': '#df5353',
+  '#': '#2f2f2f',
+};
 
 type Props = {
   remoteState: DailyLessonActivityState['activityState'];
@@ -150,7 +171,14 @@ export const DailyLessonActivity = ({
   // Generican, ne Day9/Day10-specifican. Ostaje dok korisnik ne predje na
   // sledeci korak (clearFeedback u loadStep ga gasi).
   const [quizHighlightSquares, setQuizHighlightSquares] = useState<
-    { square: Square; color: string; fill?: boolean; dot?: boolean }[] | null
+    | {
+        square: Square;
+        color: string;
+        fill?: boolean;
+        dot?: boolean;
+        label?: string;
+      }[]
+    | null
   >(null);
   const [quizHighlightArrows, setQuizHighlightArrows] =
     useState<ArrowsMap | null>(null);
@@ -171,6 +199,9 @@ export const DailyLessonActivity = ({
           return acc;
         }, {} as Record<string, [string, string, string]>);
         setQuizHighlightArrows(arrowsMap as unknown as ArrowsMap);
+      } else if (arrows) {
+        // Eksplicitno prazan niz brise strelice prethodnog highlight-a (Lessons 2 Day 27).
+        setQuizHighlightArrows(null);
       }
       if (squares?.length) {
         setQuizHighlightSquares(
@@ -179,6 +210,7 @@ export const DailyLessonActivity = ({
             color: s.color,
             fill: s.fill,
             dot: s.dot,
+            label: s.label,
           }))
         );
       }
@@ -265,6 +297,17 @@ export const DailyLessonActivity = ({
   // progressRef sam vise NIJE pouzdan signal "da li sme ponovo da se odgovori"
   // za ovaj tip koraka.
   const quizAnsweredCorrectlyRef = useRef(false);
+  // quizMoveOptions - onMove je definisan pre onSelectQuizAnswer, pa ide kroz ref.
+  const onSelectQuizAnswerRef = useRef<
+    ((index: number, playedUci?: string) => Promise<void>) | null
+  >(null);
+  // playMoveOnLoad niz u toku - odgovor na kviz ceka da se zavrsi.
+  const introMovesRef = useRef<Promise<void>>(Promise.resolve());
+  // Opcija odgovorena potezom na tabli - da i dugme u chatu bude oznaceno.
+  const [boardQuizAnswer, setBoardQuizAnswer] = useState<{
+    stepId: string;
+    index: number;
+  } | null>(null);
   // LessonStep.anyLegalMoveStreak/exactMoveUci/raceSolution (Day 30
   // "Graduation Checkpoint 1" Part A) - sopstveni, odvojen set refova, NE
   // deli progressRef/errorsRef semantiku standardnog teach/puzzle koraka
@@ -301,6 +344,26 @@ export const DailyLessonActivity = ({
   const [quizBoardNudge, setQuizBoardNudge] = useState(false);
   // potez na vec resenom koraku - Next/Start pulsira, poruka ide jednom po koraku
   const [nudgeNext, setNudgeNext] = useState(false);
+  const missCountRef = useRef({ key: '', n: 0 });
+  // quizDemoLine focus - tabla napred, ostatak ekrana zamucen dok traje zavrsna animacija.
+  const [boardFocus, setBoardFocus] = useState(false);
+  // Skip dugme tokom zavrsne animacije - prekida tekucu pauzu u quizDemoLine petlji.
+  const demoSkipRef = useRef(false);
+  const demoWakeRef = useRef<(() => void) | null>(null);
+  const onSkipDemo = useCallback(() => {
+    demoSkipRef.current = true;
+    demoWakeRef.current?.();
+  }, []);
+  // Tabla ostaje iznad zatamnjenja dok se ono ne povuce (inace bi se zamutila na izlasku).
+  const [boardLifted, setBoardLifted] = useState(false);
+  useEffect(() => {
+    if (boardFocus) {
+      setBoardLifted(true);
+      return;
+    }
+    const t = setTimeout(() => setBoardLifted(false), 700);
+    return () => clearTimeout(t);
+  }, [boardFocus]);
   const doneMoveNudgedRef = useRef(false);
   const quizNudgeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(
     null
@@ -366,6 +429,23 @@ export const DailyLessonActivity = ({
     findLoadedChapter(remoteState) || initialDefaultChapter;
   const lessonState = currentChapter.dailyLesson;
   const lesson = findLesson(lessonState.lessonId);
+  // Lesson.pawnyRating - rejting ove partije, nov na svaki Play again.
+  const [pawnyRating, setPawnyRating] = useState<number | null>(null);
+  useEffect(() => {
+    setPawnyRating(rollPawnyRating(lesson));
+  }, [lesson?.id]);
+  const displayLesson = useMemo(
+    () => withPawnyRating(lesson, pawnyRating),
+    [lesson, pawnyRating]
+  );
+  // Sveze stanje table za loadStep (LessonStep.continuesGame).
+  const chapterRef = useRef(currentChapter);
+  chapterRef.current = currentChapter;
+
+  // Zavrsena lekcija otvara sledecu na stranici Lessons (vidi getLessonAccess).
+  useEffect(() => {
+    if (lessonState.completed && lesson) markLessonCompleted(lesson.id);
+  }, [lessonState.completed, lesson]);
 
   /**
    * Lesson.shuffleStepsFrom (Day 22 "Material") - koraci od tog indeksa se
@@ -395,8 +475,15 @@ export const DailyLessonActivity = ({
   // na PRVOM pitanju oboji DRUGI segment (prijavljen bag - excludeFromProgress
   // korak ispred pomera sirov niz-indeks za 1 u odnosu na trakin indeks).
   const countableIndexOf = useCallback(
-    (rawIndex: number) =>
-      steps.slice(0, rawIndex).filter((s) => !s.excludeFromProgress).length,
+    (rawIndex: number) => {
+      const before = steps
+        .slice(0, rawIndex)
+        .filter((s) => !s.excludeFromProgress).length;
+      const step = steps[rawIndex];
+      return step?.excludeFromProgress && step.progressAttachToPrevious
+        ? Math.max(0, before - 1)
+        : before;
+    },
     [steps]
   );
 
@@ -415,6 +502,58 @@ export const DailyLessonActivity = ({
   const stepIndexRef = useRef(lessonState.stepIndex);
   const step: LessonStep | null = steps[stepIndexRef.current] ?? null;
 
+  // Znak uz potez na tabli (??, !!, #...), kao na Lichess-u. Cita se iz
+  // labele watch koraka iste partije, pa prati i setanje kroz notaciju.
+  const boardTheme = useBoardTheme();
+  const focusedMove = FreeBoardHistory.findMoveAtIndex(
+    currentChapter.notation.history,
+    currentChapter.notation.focusedIndex
+  );
+  // LessonStep.boardBackdrop/moveBackdrops - stalne oznake ispod privremenih (Day 29).
+  const [backdropSquares, setBackdropSquares] = useState<
+    LessonStep['boardBackdrop'] | null
+  >(null);
+  // LessonStep.moveGlyphs / otherTypeMoves[].glyph - znak uz korisnikov potez (Day 28).
+  const [moveGlyph, setMoveGlyph] = useState<{
+    square: string;
+    glyph: string;
+  } | null>(null);
+  // Krug sa znakom (!, ?, #) u gornjem desnom uglu polja, boje kao na Lichess-u.
+  const renderGlyphBadge = (glyph: string, boardSize: number) => (
+    <span
+      className="pointer-events-none absolute flex items-center justify-center rounded-full font-bold text-white"
+      style={{
+        top: '4%',
+        right: '4%',
+        width: '34%',
+        height: '34%',
+        fontSize: `${Math.max(10, Math.round(boardSize / 8 / 4.2))}px`,
+        background: MOVE_GLYPH_COLORS[glyph] ?? '#e69f00',
+        boxShadow: '0 2px 4px rgba(0,0,0,0.45)',
+        letterSpacing: '-0.04em',
+        zIndex: 2,
+      }}
+    >
+      {glyph}
+    </span>
+  );
+  const boardAnnotation = useMemo(() => {
+    if (!focusedMove || focusedMove.isNonMove) return moveGlyph;
+    const uci = `${focusedMove.from}${focusedMove.to}`;
+    let start = stepIndexRef.current;
+    while (start > 0 && steps[start]?.continuesGame) start--;
+    for (let i = start; i < steps.length; i++) {
+      const s = steps[i];
+      if (i > start && !s.continuesGame) break;
+      if (s.playMoveOnLoad !== uci) continue;
+      const glyph = s.prompt.match(/(\?\?|!!|\?!|!\?|\?|!)$/)?.[1];
+      if (glyph) return { square: focusedMove.to, glyph };
+    }
+    if (focusedMove.san?.endsWith('#'))
+      return { square: focusedMove.to, glyph: '#' };
+    return moveGlyph;
+  }, [focusedMove, steps, moveGlyph]);
+
   // Sigurnosna mreza (korisnica prijavila: staro quiz oznacavanje polja - npr.
   // f2 iz Part A - ostaje vidljivo na tabli i NAKON prelaska na sledeci
   // markSquares korak u Part B, cija tabla treba da bude potpuno cista dok
@@ -427,6 +566,8 @@ export const DailyLessonActivity = ({
     setQuizHighlightArrows(null);
     setNudgeNext(false);
     doneMoveNudgedRef.current = false;
+    setBoardFocus(false);
+    setMoveGlyph(null);
   }, [step?.id]);
 
   const totalSteps = steps.length;
@@ -522,7 +663,9 @@ export const DailyLessonActivity = ({
   const isStepComplete =
     !!step &&
     (step.kind === 'freePlay'
-      ? lessonState.completed
+      ? // freePlayGoal 'promote' usred lekcije - bezbedna dama dispatchuje progress 1
+        lessonState.completed ||
+        (step.freePlayGoal === 'promote' && progress >= 1)
       : progress >= step.solution.length);
   // "Watch & learn" kviz korak bez quizOptions (npr. Day 10 primeri bez
   // poteza) i kind:'markSquares' - zavrsen je odmah/cim korisnik zavrsi
@@ -733,6 +876,36 @@ export const DailyLessonActivity = ({
    */
   const beginStep = useCallback(
     async (target: LessonStep) => {
+      const playLoadMoves = async (uciMoves: string | string[]) => {
+        // Niz poteza (Lessons 2 Day 5 demo) se igra jedan po jedan.
+        const key = stepKeyRef.current;
+        const moves = ([] as string[]).concat(uciMoves);
+        introMovesRef.current = (async () => {
+          for (const uci of moves) {
+            await new Promise<void>((resolve) =>
+              setTimeout(resolve, OPPONENT_REPLY_DELAY_MS)
+            );
+            if (stepKeyRef.current !== key) break;
+            const introMove = uciToMove(uci);
+            moveSoundRef.current?.play().catch(() => {});
+            await enqueueMovexUpdate(() =>
+              dispatch({
+                type: 'loadedChapter:addDailyLessonMove',
+                payload: { move: { from: introMove.from, to: introMove.to } },
+              })
+            );
+          }
+        })();
+        await introMovesRef.current;
+      };
+
+      // Watch korak bez pitanja (Lessons 2 Day 15): prvo potez, pa komentar o njemu.
+      const isWatchMove =
+        target.kind === 'quiz' &&
+        !target.quizOptions &&
+        !!target.playMoveOnLoad;
+      if (isWatchMove) await playLoadMoves(target.playMoveOnLoad!);
+
       await sendStepIntro(target);
 
       // LessonStep.anyLegalMoveStreak/exactMoveUci/raceSolution (Day 30
@@ -837,6 +1010,15 @@ export const DailyLessonActivity = ({
       ) {
         applyBoardHighlight(target.quizBoardHighlight);
       }
+      // Puzzle: highlight prvog poteza vidljiv odmah, kao instruktivan primer (Lessons 2 Day 17).
+      const firstGuideHighlight = target.moveGuides?.[0]?.highlight;
+      if (
+        target.kind === 'puzzle' &&
+        target.quizBoardHighlightUpfront &&
+        firstGuideHighlight
+      ) {
+        applyBoardHighlight(firstGuideHighlight);
+      }
 
       // LessonStep.playMoveOnLoad (Day 27 "Chess Notation" Part C) - tabla
       // POCINJE sa figurom na POLAZNOM polju (`target.fen`) i odigra STVARAN
@@ -846,17 +1028,7 @@ export const DailyLessonActivity = ({
       // STVARNO video. Mala pauza pre poteza (isti princip kao protivnikov
       // odgovor u puzzle koracima) da polazna pozicija stigne da se vidi.
       if (target.kind === 'quiz' && target.playMoveOnLoad) {
-        await new Promise<void>((resolve) =>
-          setTimeout(resolve, OPPONENT_REPLY_DELAY_MS)
-        );
-        const introMove = uciToMove(target.playMoveOnLoad);
-        moveSoundRef.current?.play().catch(() => {});
-        await enqueueMovexUpdate(() =>
-          dispatch({
-            type: 'loadedChapter:addDailyLessonMove',
-            payload: { move: { from: introMove.from, to: introMove.to } },
-          })
-        );
+        await playLoadMoves(target.playMoveOnLoad);
       }
 
       // Strelica do resenja vidljiva ODMAH, bez cekanja Hint klika (npr.
@@ -965,6 +1137,12 @@ export const DailyLessonActivity = ({
       // dok React ne zavrti sledeci render.
       const target = (shuffledStepsRef.current?.steps ?? steps)[stepIndex];
       if (!target) return;
+      // Nastavak iste partije: bez novog FEN importa, notacija cuva sve poteze.
+      const gameHistory = chapterRef.current.notation.history;
+      const continuesGame =
+        !!target.continuesGame &&
+        stepIndexRef.current === stepIndex - 1 &&
+        gameHistory.length > 0;
 
       clearFeedback();
       // NIJE u clearFeedback - taj se zove i na pogresan potez, gde top nije
@@ -998,12 +1176,26 @@ export const DailyLessonActivity = ({
       stepIndexRef.current = stepIndex;
       awaitingResetRef.current = true;
 
-      await enqueueMovexUpdate(() =>
-        dispatch({
-          type: 'loadedChapter:import',
-          payload: { input: { type: 'FEN', val: target.fen } },
-        })
-      );
+      // Stalne oznake: nove iz koraka, inace ostaju samo kroz nastavak iste partije.
+      if (target.boardBackdrop) setBackdropSquares(target.boardBackdrop);
+      else if (!continuesGame) setBackdropSquares(null);
+
+      if (continuesGame) {
+        // Ako je korisnik setao kroz notaciju, vrati tablu na poslednji potez.
+        await enqueueMovexUpdate(() =>
+          dispatch({
+            type: 'loadedChapter:focusHistoryIndex',
+            payload: FreeBoardHistory.getLastIndexInHistory(gameHistory),
+          })
+        );
+      } else {
+        await enqueueMovexUpdate(() =>
+          dispatch({
+            type: 'loadedChapter:import',
+            payload: { input: { type: 'FEN', val: target.fen } },
+          })
+        );
+      }
       await enqueueMovexUpdate(() =>
         dispatch({
           type: 'loadedChapter:setOrientation',
@@ -1107,12 +1299,25 @@ export const DailyLessonActivity = ({
         const uci = step.solution[progressRef.current];
         if (uci) setHintArrowMap(buildSolutionArrow(uci));
       }
+      // Promasaji se broje po potezu, ne po celom koraku (Lessons 2 Day 15/16).
+      const missKey = `${stepKeyRef.current}:${progressRef.current}`;
+      if (missCountRef.current.key !== missKey)
+        missCountRef.current = { key: missKey, n: 0 };
+      const missCount = ++missCountRef.current.n;
+      const moveGuide = step?.moveGuides?.[progressRef.current];
+      const missTexts = moveGuide?.missTexts ?? step?.missTexts;
+      // missTexts - od drugog promasaja i strelica do resenja.
+      if (missTexts && missCount >= 2) {
+        const uci = step?.solution[progressRef.current];
+        if (uci) setHintArrowMap(buildSolutionArrow(uci));
+      }
 
       // Day 15 Part 2 - Hint namerno ne otkriva resenje (hintNeverRevealsArrow),
       // ali prvi pogresan potez ipak dobija vizuelno objasnjenje (wrongMoveHighlight).
       if (step?.wrongMoveHighlight) {
         applyBoardHighlight(step.wrongMoveHighlight);
       }
+      if (moveGuide?.highlight) applyBoardHighlight(moveGuide.highlight);
 
       wrongMoveSoundRef.current!.currentTime = 0;
       wrongMoveSoundRef.current?.play().catch(() => {});
@@ -1157,6 +1362,12 @@ export const DailyLessonActivity = ({
           pieceAt(currentChapter.displayFen, move.to)
         ) {
           await sendCoachMessage(step.wrongCaptureText);
+        } else if (missTexts?.length) {
+          await sendCoachMessage(
+            missTexts[Math.min(missCount, missTexts.length) - 1]
+          );
+        } else if (moveGuide?.wrongText) {
+          await sendCoachMessage(moveGuide.wrongText);
         } else if (step.hintTextAlways) {
           await sendCoachMessage(step.hintText);
         } else {
@@ -1228,7 +1439,7 @@ export const DailyLessonActivity = ({
       setFreePlyCountState(freePlyCountRef.current);
 
       const chess = new Chess(fenBeforeMove);
-      chess.move({
+      const playedPly = chess.move({
         from: move.from,
         to: move.to,
         // chess.js prihvata SAMO malo slovo za promociju (q/r/b/n) - UI
@@ -1241,6 +1452,50 @@ export const DailyLessonActivity = ({
           | 'b'
           | 'n',
       });
+
+      // LessonStep.freePlayGoal 'promote' - pobeda je bezbedna dama, svaki raniji kraj partije restartuje poziciju.
+      if (step?.freePlayGoal === 'promote') {
+        const safeQueen =
+          playedPly.color === step.orientation &&
+          !!playedPly.promotion &&
+          !chess.isStalemate() &&
+          !chess.moves({ verbose: true }).some((m) => m.to === playedPly.to);
+        if (safeQueen) {
+          stepDoneSoundRef.current?.play().catch(() => {});
+          await sendCoachMessage(step.doneText);
+          await enqueueMovexUpdate(() =>
+            dispatch({
+              type: 'loadedChapter:setDailyLesson',
+              payload: withCounters({
+                progress: 1,
+                popup: true,
+                completed: isLastStep,
+              }),
+            })
+          );
+          setIsBusy(false);
+          return;
+        }
+        if (chess.isGameOver() || !!playedPly.promotion) {
+          await sendCoachMessage(
+            step.freePlayFailText ?? "That's a draw. Let's reset and try again."
+          );
+          await new Promise<void>((resolve) => setTimeout(resolve, 1200));
+          clearFeedback();
+          await enqueueMovexUpdate(() =>
+            dispatch({
+              type: 'loadedChapter:import',
+              payload: { input: { type: 'FEN', val: step.fen } },
+            })
+          );
+          freePlyCountRef.current = 0;
+          setFreePlyCountState(0);
+          userMoveCountRef.current = 0;
+          setTakeBackVersion((v) => v + 1);
+          setIsBusy(false);
+          return;
+        }
+      }
 
       if (chess.isGameOver()) {
         // LessonStep.requireCheckmate (Day 20 "Deliver Mate" Phase 2) - SAMO
@@ -1317,6 +1572,7 @@ export const DailyLessonActivity = ({
       clearFeedback,
       currentChapter.notation.history,
       dispatch,
+      isLastStep,
       sendCoachMessage,
       sendPawnyMessage,
       step,
@@ -1385,6 +1641,40 @@ export const DailyLessonActivity = ({
       }
       // Figura ostaje na drop polju odmah, ne vraca se na polazno dok potez ceka u Movex redu.
       setFreePlayOptimisticFen(chess.fen());
+
+      // LessonStep.freePlayKeepWinning - potez koji ispusta dobijenu poziciju se vraca.
+      const keepWinning = step?.freePlayKeepWinning;
+      if (keepWinning && !chess.isGameOver()) {
+        setIsBusy(true);
+        const lines = await analyzePosition(chess.fen(), {
+          multiPv: 1,
+          movetime: 700,
+        });
+        const top = lines?.[0];
+        // Ocena je iz ugla protivnika (on je na potezu): negativno = korisnik dobija.
+        const stillWinning =
+          !top ||
+          (top.mate !== null
+            ? top.mate < 0
+            : (top.scoreCp ?? 0) <= -(keepWinning.minCp ?? 250));
+        if (!stillWinning) {
+          setFreePlayOptimisticFen(null);
+          setIsBusy(false);
+          clearFeedback();
+          setWrongSquare(move.to);
+          wrongMoveSoundRef.current!.currentTime = 0;
+          wrongMoveSoundRef.current?.play().catch(() => {});
+          errorsRef.current += 1;
+          totalErrorsRef.current += 1;
+          const uci = `${move.from}${move.to}`;
+          const isFirstMove = userMoveCountRef.current === 0;
+          await sendCoachMessage(
+            (isFirstMove && keepWinning.firstMoveTexts?.[uci]) ||
+              keepWinning.wrongText
+          );
+          return;
+        }
+      }
       // Motivaciona recenica (Outposty, treneR) - posle KORISNIKOVOG poteza
       // samo, ucestalost opada kroz partiju. Ne ceka se (await) - ide u isti
       // Movex red kao i sam potez ispod, redosled je i dalje tacan jer oba
@@ -1423,6 +1713,27 @@ export const DailyLessonActivity = ({
           unusedTipIndexes[Math.floor(Math.random() * unusedTipIndexes.length)];
         techniqueTipsUsedRef.current.add(tipPick);
         sendCoachMessage(tipPool[tipPick]);
+      }
+
+      // LessonStep.oppositionCoachTexts - kraljevi licem u lice, jedno polje izmedju, crni na potezu.
+      const oppositionPool = step?.oppositionCoachTexts;
+      if (
+        oppositionPool?.length &&
+        chess.history({ verbose: true })[0]?.piece === 'k'
+      ) {
+        const kings = chess
+          .board()
+          .flat()
+          .filter((p) => p?.type === 'k')
+          .map((p) => p!.square);
+        const [a, b] = kings;
+        const df = Math.abs(a.charCodeAt(0) - b.charCodeAt(0));
+        const dr = Math.abs(Number(a[1]) - Number(b[1]));
+        if ((df === 0 && dr === 2) || (df === 2 && dr === 0)) {
+          sendCoachMessage(
+            oppositionPool[Math.floor(Math.random() * oppositionPool.length)]
+          );
+        }
       }
 
       setIsBusy(true);
@@ -1783,6 +2094,57 @@ export const DailyLessonActivity = ({
       // odgovori; ako je cist "watch & learn" primer, objasni da je to samo
       // primer i da se ide dalje na Got it.
       if (step?.kind === 'quiz') {
+        // quizAnswerViaNextButton - pre klika na dugme tabla samo pulsira to dugme.
+        if (
+          step.quizAnswerViaNextButton &&
+          progressRef.current < step.solution.length
+        ) {
+          setNudgeNext(true);
+          if (!doneMoveNudgedRef.current) {
+            doneMoveNudgedRef.current = true;
+            await sendCoachMessage(
+              `Just watch this one. Click **${step.quizOptions?.[0]}** to start.`
+            );
+          }
+          return;
+        }
+        // Odgovoreno pitanje - potez na tabli pulsira Next, isto kao kod resenog puzzle-a.
+        if (step.quizOptions && progressRef.current >= step.solution.length) {
+          setNudgeNext(true);
+          if (!doneMoveNudgedRef.current) {
+            doneMoveNudgedRef.current = true;
+            await sendCoachMessage(
+              `Nothing to play here. Click **${
+                step.nextButtonText ?? 'Next'
+              }** to keep going.`
+            );
+          }
+          return;
+        }
+        // Watch/staticni primer (Lessons 2 Day 15/18) - samo se gleda, dugme svetli i vodi dalje.
+        if (!step.quizOptions && !step.quizMoveOptions) {
+          setNudgeNext(true);
+          if (!doneMoveNudgedRef.current) {
+            doneMoveNudgedRef.current = true;
+            await sendCoachMessage(
+              `${
+                step.playMoveOnLoad
+                  ? 'Just watch for now.'
+                  : 'Nothing to play here, just look at the board.'
+              } Click **${step.nextButtonText ?? 'Next'}** to keep going.`
+            );
+          }
+          return;
+        }
+        const uci = `${move.from}${move.to}`;
+        const optionIndex =
+          step.quizMoveOptions?.findIndex((ucis) => ucis.includes(uci)) ?? -1;
+        if (optionIndex !== -1) {
+          if (progressRef.current >= step.solution.length) return;
+          setBoardQuizAnswer({ stepId: step.id, index: optionIndex });
+          await onSelectQuizAnswerRef.current?.(optionIndex, uci);
+          return;
+        }
         setQuizBoardNudge(true);
         if (quizNudgeTimeoutRef.current)
           clearTimeout(quizNudgeTimeoutRef.current);
@@ -1791,7 +2153,11 @@ export const DailyLessonActivity = ({
           1200
         );
         await sendCoachMessage(
-          step.quizOptions
+          step.quizMoveOptions
+            ? step.quizMoveOptions.length === 1
+              ? 'Play the move above, or tap it in the chat.'
+              : 'Play one of the two moves above, or tap it in the chat.'
+            : step.quizOptions
             ? 'Solve the quiz above first — the board comes right after! 👆'
             : 'This is a static example — just look at the board and read the text, no need to play. Click Got it and let’s keep learning.'
         );
@@ -1953,11 +2319,21 @@ export const DailyLessonActivity = ({
           : step.otherTypeMoves?.[currentProgress]?.find((m) =>
               movesMatch(m.uci, move)
             )?.message;
+        const wrongGlyph = step.otherTypeMoves?.[currentProgress]?.find((m) =>
+          movesMatch(m.uci, move)
+        )?.glyph;
+        setMoveGlyph(
+          wrongGlyph ? { square: move.to, glyph: wrongGlyph } : null
+        );
         await onWrongMove(move, otherTypeMessage);
         return;
       }
 
       clearFeedback();
+      const nextBackdrop = step.moveBackdrops?.[currentProgress];
+      if (nextBackdrop) setBackdropSquares(nextBackdrop);
+      const rightGlyph = step.moveGlyphs?.[currentProgress];
+      setMoveGlyph(rightGlyph ? { square: move.to, glyph: rightGlyph } : null);
       // wrongPathPreview X (ako postoji) - gasi se cim je TACAN potez nadjen,
       // ne ranije (ostaje vidljiv kroz pogresne pokusaje - clearFeedback ga
       // namerno ne dira, vidi komentar uz xMarkSquares).
@@ -2100,7 +2476,10 @@ export const DailyLessonActivity = ({
         if (plyHighlightBeforeReply && plyHighlight) {
           applyBoardHighlight(plyHighlight);
           await new Promise<void>((resolve) =>
-            setTimeout(resolve, MOVE_HIGHLIGHT_HOLD_MS)
+            setTimeout(
+              resolve,
+              step.moveHighlightHoldMs ?? MOVE_HIGHLIGHT_HOLD_MS
+            )
           );
         }
         progressRef.current = progressAfterUserMove + 1;
@@ -2154,6 +2533,9 @@ export const DailyLessonActivity = ({
           move.promoteTo.toLowerCase() !== 'q' &&
           step.nonQueenPromotionText
             ? step.nonQueenPromotionText
+            : step.doneTextAfterMiss &&
+              (errorsRef.current > 0 || hintsRef.current > 0)
+            ? step.doneTextAfterMiss
             : altSolution?.doneText ?? step.doneText;
         // Board highlight (npr. Day 12 "box" koji dama drzi oko kralja) -
         // ovde se prikazuje POSLE cele sekvence (ukljucujuci protivnikov
@@ -2162,6 +2544,13 @@ export const DailyLessonActivity = ({
         // "posle" i "odmah" se poklapaju), ponovni poziv je bezopasan.
         if (step.quizBoardHighlight) {
           applyBoardHighlight(step.quizBoardHighlight);
+        }
+        // Korak zavrsava protivnikov odgovor (Lessons 2 Day 16) - prvo poruka za korisnikov potez.
+        if (
+          finalProgress > currentProgress + 1 &&
+          step.moveExplanations?.[currentProgress]
+        ) {
+          await sendCoachMessage(step.moveExplanations[currentProgress]);
         }
         await sendCoachMessage(doneMessage);
         // Druga poruka/highlight POSLE standardnog zavrsetka (npr. Day 17
@@ -2200,6 +2589,8 @@ export const DailyLessonActivity = ({
         if (step.moveExplanations?.[currentProgress]) {
           await sendCoachMessage(step.moveExplanations[currentProgress]);
         }
+        const replyText = step.moveGuides?.[currentProgress]?.replyText;
+        if (replyText) await sendCoachMessage(replyText);
       } else if (step.successText) {
         if (step.successTextAlways) {
           await sendCoachMessage(step.successText);
@@ -2253,8 +2644,13 @@ export const DailyLessonActivity = ({
    * kroz onMove/movesMatch uopste - samo upisuje progress i posalje objasnjenje.
    */
   const onSelectQuizAnswer = useCallback(
-    async (index: number) => {
+    async (index: number, playedUci?: string) => {
       if (!step || step.kind !== 'quiz') return;
+      await introMovesRef.current;
+      if (step.quizAnswerViaNextButton) {
+        setNudgeNext(false);
+        doneMoveNudgedRef.current = false;
+      }
       // quizRetryOnWrong koraci (Day 15 "Yes/No") NE koriste progressRef kao
       // "vec odgovoreno" bravu - "Got it!" se otkljucuje i na netacan
       // odgovor (vidi nize), pa bi progressRef vec bio na kraju posle PRVOG
@@ -2267,6 +2663,8 @@ export const DailyLessonActivity = ({
       }
 
       const isCorrect = index === step.quizCorrectIndex;
+      // Next se ne sme otkljucati pre kraja quizDemoLine (vidi nize).
+      if (step.quizDemoLine?.length) setIsBusy(true);
       (isCorrect ? stepDoneSoundRef : wrongMoveSoundRef).current
         ?.play()
         .catch(() => {});
@@ -2425,14 +2823,39 @@ export const DailyLessonActivity = ({
 
       // Day 15 Position 6 - posle TACNOG "Yes" odgovora, tabla sama odigra
       // rokadu da pokaze da je stvarno legalna, PRE Coach-ove poruke.
-      if (isCorrect && step.quizAutoPlayMove) {
-        const autoMove = uciToMove(step.quizAutoPlayMove);
+      // quizMoveOptions - tacan potez odigran na tabli ima prednost nad podrazumevanim.
+      const autoPlayUci = (isCorrect && playedUci) || step.quizAutoPlayMove;
+      if (isCorrect && autoPlayUci) {
+        const autoMove = uciToMove(autoPlayUci);
         moveSoundRef.current?.play().catch(() => {});
         await enqueueMovexUpdate(() =>
           dispatch({
             type: 'loadedChapter:addDailyLessonMove',
             payload: { move: { from: autoMove.from, to: autoMove.to } },
           })
+        );
+        if (step.quizAutoPlayReply) {
+          await new Promise<void>((resolve) =>
+            setTimeout(resolve, OPPONENT_REPLY_DELAY_MS)
+          );
+          const reply = uciToMove(step.quizAutoPlayReply);
+          moveSoundRef.current?.play().catch(() => {});
+          await enqueueMovexUpdate(() =>
+            dispatch({
+              type: 'loadedChapter:addDailyLessonMove',
+              payload: { move: { from: reply.from, to: reply.to } },
+            })
+          );
+        }
+      }
+      // displayFen je ovde jos pozicija pre poteza (closure).
+      if (step.quizCenterControl && autoPlayUci) {
+        applyBoardHighlight(
+          centerControlHighlight(
+            currentChapter.displayFen,
+            autoPlayUci,
+            !isCorrect
+          )
         );
       }
 
@@ -2464,6 +2887,87 @@ export const DailyLessonActivity = ({
           explanation,
           isCorrect ? undefined : 'wrongQuizAnswer'
         );
+      }
+
+      // quizDemoLine - linija se odigra posle odgovora; Next ceka kraj (isBusy).
+      if (step.quizDemoLine?.length) {
+        const key = stepKeyRef.current;
+        let focused = false;
+        demoSkipRef.current = false;
+        // Pauza koju Skip dugme moze odmah da prekine.
+        const pause = (ms: number) =>
+          new Promise<void>((resolve) => {
+            const t = setTimeout(resolve, ms);
+            demoWakeRef.current = () => {
+              clearTimeout(t);
+              resolve();
+            };
+          });
+        for (const {
+          uci,
+          text,
+          highlight,
+          celebrate,
+          focus,
+        } of step.quizDemoLine) {
+          await pause(OPPONENT_REPLY_DELAY_MS * 2);
+          if (stepKeyRef.current !== key || demoSkipRef.current) break;
+          // Tabla izlazi u prvi plan pre poteza, pa tek kad se smiri krecu potezi.
+          if (focus && !focused) {
+            focused = true;
+            setBoardFocus(true);
+            await pause(BOARD_FOCUS_TRANSITION_MS);
+            if (stepKeyRef.current !== key || demoSkipRef.current) break;
+          }
+          const lineMove = uciToMove(uci);
+          // ChessFENBoard cita boju iz slova: belom pesaku (promocija na 8. red) treba veliko slovo.
+          const promoteTo =
+            lineMove.promoteTo &&
+            (lineMove.to[1] === '8'
+              ? lineMove.promoteTo.toUpperCase()
+              : lineMove.promoteTo.toLowerCase());
+          moveSoundRef.current?.play().catch(() => {});
+          await enqueueMovexUpdate(() =>
+            dispatch({
+              type: 'loadedChapter:addDailyLessonMove',
+              payload: {
+                move: {
+                  from: lineMove.from,
+                  to: lineMove.to,
+                  ...(promoteTo
+                    ? { promoteTo: promoteTo as ChessMove['promoteTo'] }
+                    : {}),
+                },
+              },
+            })
+          );
+          if (highlight) applyBoardHighlight(highlight);
+          if (celebrate) {
+            stepDoneSoundRef.current?.play().catch(() => {});
+            confetti({
+              startVelocity: 40,
+              particleCount: 120,
+              spread: 120,
+              origin: { y: 0.6 },
+            });
+          }
+          if (text) await sendCoachMessage(text);
+        }
+        // Tabla ostaje u fokusu dok traje proslava, pa se glatko vraca.
+        if (focused && !demoSkipRef.current) await pause(BOARD_FOCUS_HOLD_MS);
+        demoWakeRef.current = null;
+        if (focused) setBoardFocus(false);
+        // Skip - preskace ostatak animacije i ide pravo na sledeci primer.
+        if (demoSkipRef.current) {
+          demoSkipRef.current = false;
+          setIsBusy(false);
+          if (stepKeyRef.current === key) onNextStep();
+          return;
+        }
+        if (stepKeyRef.current === key && step.quizDemoEndHighlight) {
+          applyBoardHighlight(step.quizDemoEndHighlight);
+        }
+        setIsBusy(false);
       }
 
       if (step.celebrate || isLastStep) {
@@ -2508,10 +3012,12 @@ export const DailyLessonActivity = ({
       lesson,
       applyBoardHighlight,
       currentChapter.messages,
+      currentChapter.displayFen,
       countableIndexOf,
       triggerRevealAnimation,
     ]
   );
+  onSelectQuizAnswerRef.current = onSelectQuizAnswer;
 
   /**
    * LessonStep.quizMultiSelect (Day 31 "Graduation Test 2" Q2/Q3) - korisnik
@@ -2732,6 +3238,30 @@ export const DailyLessonActivity = ({
       if (isBusy || isStepComplete) return;
 
       const already = markedSquares.has(square);
+      // markRetryOnWrong (Lessons 2 Day 18) - svaki klik se ocenjuje odmah, greska ne zavrsava korak.
+      if (step.markRetryOnWrong) {
+        if (already) return;
+        if (!step.solution.includes(square)) {
+          wrongMoveSoundRef.current?.play().catch(() => {});
+          errorsRef.current += 1;
+          totalErrorsRef.current += 1;
+          setWrongQuizSteps((prev) =>
+            new Set(prev).add(countableIndexOf(stepIndexRef.current))
+          );
+          setWrongMarkedSquare(square);
+          await sendCoachMessage(step.firstMissText ?? step.hintText);
+          return;
+        }
+        const next = new Set(markedSquares).add(square);
+        setMarkedSquares(next);
+        if (wrongMarkedSquare) setWrongMarkedSquare(null);
+        if (next.size === step.solution.length) {
+          await finalizeMarkAttempt(next);
+        } else if (step.markPartialText) {
+          await sendCoachMessage(step.markPartialText);
+        }
+        return;
+      }
       // Ne dozvoljava da predje preko ocekivanog broja polja - kad ih je vec
       // tacno onoliko koliko resenje trazi, svaki DODATNI klik se ignorise
       // (skidanje postojece oznake i dalje uvek radi, da korisnik moze da
@@ -2757,6 +3287,8 @@ export const DailyLessonActivity = ({
       markedSquares,
       wrongMarkedSquare,
       finalizeMarkAttempt,
+      countableIndexOf,
+      sendCoachMessage,
     ]
   );
 
@@ -2820,26 +3352,31 @@ export const DailyLessonActivity = ({
           }
         }
         const phase = technique?.phase ?? 'mate';
+        const isKpk = step.hintTechnique === 'kpkOpposition';
         const data = await SendHintExplanation(
           currentChapter.displayFen,
           san,
           phase,
-          currentChapter
+          currentChapter,
+          isKpk ? 'kpkOpposition' : undefined
         );
         const phaseFallback: Record<typeof phase, string> = {
           box: `Try ${san}. It boxes the king in further before your own king comes up.`,
           approach: `Try ${san}. The king's boxed in now - bring your own king up to help.`,
           mate: `Try ${san}. That's checkmate.`,
         };
+        const fallback = isKpk
+          ? `Try ${san}. Keep your king in front of the pawn and take the opposition.`
+          : phaseFallback[phase];
         if (data === 'ai_daily_limit_reached') {
           await sendCoachMessage(
-            `${phaseFallback[phase]} I'm out of live explanations for today.`
+            `${fallback} I'm out of live explanations for today.`
           );
           return;
         }
         const answerText =
           typeof data?.answer === 'string' ? data.answer : data?.answer?.text;
-        await sendCoachMessage(answerText || phaseFallback[phase]);
+        await sendCoachMessage(answerText || fallback);
       } finally {
         setLiveHintLoading(false);
       }
@@ -2878,9 +3415,11 @@ export const DailyLessonActivity = ({
       if (hintsRef.current >= 1) return;
       hintsRef.current = 1;
       totalHintsRef.current += 1;
-      await sendCoachMessage(
-        'To mark a square: right-click it on desktop, or tap it on mobile.'
-      );
+      if (!step.markRetryOnWrong) {
+        await sendCoachMessage(
+          'To mark a square: right-click it on desktop, or tap it on mobile.'
+        );
+      }
       // bez quizBoardHighlight - pokazi sama trazena polja
       applyBoardHighlight(
         step.quizBoardHighlight ?? {
@@ -3085,9 +3624,14 @@ export const DailyLessonActivity = ({
     // Daily Lesson, ne samo poslednji hint.
     const isFinalHint = hintsThisMove() + 1 >= MAX_HINTS_PER_STEP;
     const { from, to } = nextMove;
+    const moveGuide = step.moveGuides?.[progress];
 
     clearFeedback();
-    setHintPieceSquare(from);
+    setHintPieceSquare(
+      !isFinalHint && moveGuide?.hintSquare
+        ? (moveGuide.hintSquare as Square)
+        : from
+    );
     // Day 15 Part 2 - Hint namerno NIKAD ne otkriva resenje preko strelice
     // (hintNeverRevealsArrow), ostaje cisto tekstualan trag cak i na
     // poslednjem kliku - vidi wrongMoveHighlight za vizuelni trag posle
@@ -3095,6 +3639,7 @@ export const DailyLessonActivity = ({
     if (isFinalHint && !step.hintNeverRevealsArrow) {
       setHintArrowMap(buildSolutionArrow(`${from}${to}`));
     }
+    if (moveGuide?.highlight) applyBoardHighlight(moveGuide.highlight);
 
     // Lokalno odmah - da brzi drugi klik ne vidi isti stari broj (vidi
     // komentar uz hintsRef).
@@ -3113,14 +3658,15 @@ export const DailyLessonActivity = ({
     // npr. Day 16 "Secret hint" po puzzli) umesto generickog variranog - radi
     // za bilo koji puzzle/teach korak, ne samo goalCondition (Day 9/15). Pada
     // nazad na generican ako nije zadat.
-    if (step.extraHintText) {
-      await sendCoachMessage(step.extraHintText);
+    if (moveGuide?.hintText ?? step.extraHintText) {
+      await sendCoachMessage((moveGuide?.hintText ?? step.extraHintText)!);
     } else {
       const lastContent =
         currentChapter.messages[currentChapter.messages.length - 1]?.content;
       await sendCoachMessage(pickHintHelpMessage(lastContent));
     }
   }, [
+    applyBoardHighlight,
     step,
     isStepComplete,
     progress,
@@ -3139,6 +3685,7 @@ export const DailyLessonActivity = ({
   /** Repeat uvek vraca celu lekciju na prvi korak, ne samo tekuci. */
   const onRepeatLesson = useCallback(() => {
     setWrongQuizSteps(new Set());
+    setPawnyRating(rollPawnyRating(lesson));
     // Lesson.shuffleStepsFrom (Day 22) - forsira re-roll na svaki Repeat
     // (ne samo prvi put), citajuci null lessonId nikad ne poklapa pravi
     // lesson.id gore, pa ga taj if-blok odmah ponovo izracuna.
@@ -3277,6 +3824,34 @@ export const DailyLessonActivity = ({
     (step?.kind === 'teach' || step?.kind === 'puzzle') &&
     !lessonState.completed &&
     !isLastStep;
+  // LessonStep.suggestSolutionMoves - sledeci korisnikov potez iz solution, kao dugme u chatu.
+  const nextSolutionMove = useMemo(() => {
+    if (!step?.suggestSolutionMoves || isBusy || isStepComplete) return null;
+    if (showIntro || preStepIntro) return null;
+    const uci = step.solution[progress];
+    if (!uci || uci === ANY_LEGAL_REPLY) return null;
+    try {
+      const chess = new Chess(currentChapter.displayFen);
+      if (chess.turn() !== step.orientation) return null;
+      const played = chess.move({
+        from: uci.slice(0, 2),
+        to: uci.slice(2, 4),
+        promotion: uci[4] as 'q' | 'r' | 'b' | 'n' | undefined,
+      });
+      return { uci, label: played.san };
+    } catch {
+      return null;
+    }
+  }, [
+    step,
+    isBusy,
+    isStepComplete,
+    showIntro,
+    preStepIntro,
+    progress,
+    currentChapter.displayFen,
+  ]);
+
   // freePlay - kao Match: ko je na potezu odredjuje turn (premove dok Pawny razmislja), ne isBusy.
   const canPlay =
     !showIntro &&
@@ -3289,7 +3864,7 @@ export const DailyLessonActivity = ({
   // duplirana dva puta (vidi boardless granu).
   const dialogContainer = (
     <DailyLessonDialogContainer
-      lesson={lesson}
+      lesson={displayLesson}
       step={step}
       lessonState={lessonState}
       showIntro={showIntro}
@@ -3371,7 +3946,7 @@ export const DailyLessonActivity = ({
         }
         userData={userData}
         currentChapterState={currentChapter}
-        lesson={lesson}
+        lesson={displayLesson}
         step={step}
         lessonState={lessonState}
         isStepComplete={isStepComplete}
@@ -3386,8 +3961,12 @@ export const DailyLessonActivity = ({
         onRepeatLesson={onRepeatLesson}
         onNextStep={onNextStep}
         onSelectQuizAnswer={onSelectQuizAnswer}
+        boardQuizAnswer={
+          boardQuizAnswer?.stepId === step?.id ? boardQuizAnswer.index : null
+        }
         onSelectMultiQuizAnswer={onSelectMultiQuizAnswer}
         onPlaySuggestedMove={onPlaySuggestedMove}
+        nextSolutionMove={nextSolutionMove}
         onDrawOffer={onDrawOffer}
         onTakeBack={onTakeBack}
         onResign={onResign}
@@ -3462,7 +4041,7 @@ export const DailyLessonActivity = ({
               key={takeBackVersion}
               fen={currentChapter.displayFen}
               active={
-                !lessonState.completed &&
+                !isStepComplete &&
                 !showIntro &&
                 !preStepIntro &&
                 (currentChapter.displayFen.split(' ')[1] as 'w' | 'b') !==
@@ -3470,6 +4049,8 @@ export const DailyLessonActivity = ({
               }
               onMove={onFreePlayBotMove}
               randomMoveChance={step.pawnyRandomMoveChance}
+              rating={pawnyRating ?? undefined}
+              ratingConfig={lesson?.pawnyRating}
             />
           )}
           {step?.kind === 'freePlay' && step.strongOpponent && (
@@ -3477,7 +4058,7 @@ export const DailyLessonActivity = ({
               key={takeBackVersion}
               fen={currentChapter.displayFen}
               active={
-                !lessonState.completed &&
+                !isStepComplete &&
                 !showIntro &&
                 !preStepIntro &&
                 (currentChapter.displayFen.split(' ')[1] as 'w' | 'b') !==
@@ -3487,7 +4068,34 @@ export const DailyLessonActivity = ({
             />
           )}
 
-          <div className="relative">
+          {/* Zavrsna animacija - ostatak ekrana se zamuti i potamni, tabla izlazi napred. */}
+          <div
+            className={`fixed inset-0 z-[90] bg-black/60 backdrop-blur-[4px] pointer-events-none transition-opacity duration-500 ease-out ${
+              boardFocus ? 'opacity-100' : 'opacity-0'
+            }`}
+          />
+          {boardFocus && (
+            <div className="fixed bottom-8 left-1/2 -translate-x-1/2 z-[96] animate-fadeIn">
+              <ButtonGreen
+                onClick={onSkipDemo}
+                icon="ForwardIcon"
+                iconKind="outline"
+                size="md"
+                className="px-5"
+              >
+                <p className="whitespace-nowrap">Skip</p>
+              </ButtonGreen>
+            </div>
+          )}
+          <div
+            className={`relative transition-[transform,filter] duration-700 ease-[cubic-bezier(0.22,1,0.36,1)] ${
+              boardLifted ? 'z-[95]' : ''
+            } ${
+              boardFocus
+                ? 'scale-[0.86] -translate-y-3 drop-shadow-[0_40px_60px_rgba(0,0,0,0.85)]'
+                : ''
+            }`}
+          >
             <DailyLessonBoard
               // Forsira remount table na SVAKI prelazak koraka, cak i kad dva
               // uzastopna koraka dele IDENTICAN FEN (npr. Day 11 A1/A2 obe
@@ -3502,7 +4110,14 @@ export const DailyLessonActivity = ({
               sizePx={boardSize}
               displayFen={freePlayOptimisticFen ?? currentChapter.displayFen}
               orientation={currentChapter.orientation}
-              forceUserTurn={stepDoneAwaitingNext && !isBusy}
+              forceUserTurn={
+                (stepDoneAwaitingNext ||
+                  // Watch/staticni primer - pokusaj ide u onMove (poruka), ne u premove.
+                  (step?.kind === 'quiz' &&
+                    !step.quizOptions &&
+                    !step.quizMoveOptions)) &&
+                !isBusy
+              }
               circlesMap={currentChapter.circlesMap}
               notation={currentChapter.notation}
               arrowsMap={boardArrows}
@@ -3578,7 +4193,11 @@ export const DailyLessonActivity = ({
                         // Levi klik nije ispravan gest ovde - podseti umesto
                         // da ga cisto ignorises.
                         e.stopPropagation();
-                        sendMarkSquaresNudge();
+                        if (step.markRetryOnWrong) {
+                          onToggleMarkSquare(square as Square);
+                        } else {
+                          sendMarkSquaresNudge();
+                        }
                       }}
                       onTouchEnd={(e) => {
                         // Tap na mobilnom - isti efekat kao desni klik na
@@ -3725,6 +4344,8 @@ export const DailyLessonActivity = ({
                       }}
                     >
                       {children}
+                      {boardAnnotation?.square === square &&
+                        renderGlyphBadge(boardAnnotation.glyph, boardSize)}
                       <div
                         style={{
                           position: 'absolute',
@@ -3791,9 +4412,14 @@ export const DailyLessonActivity = ({
                 // postojeci hint-na-figuru okvir (useCustomStyles.ts
                 // hintFromStyles) - inset box-shadow preko CELOG polja, ne
                 // skupljena unutrasnja kutija.
-                const quizMark = quizHighlightSquares?.find(
+                const transientMark = quizHighlightSquares?.find(
                   (m) => m.square === square
                 );
+                // Stalna oznaka (boardBackdrop) samo kad nema privremene na tom polju.
+                const backdropMark = transientMark
+                  ? undefined
+                  : backdropSquares?.find((m) => m.square === square);
+                const quizMark = transientMark ?? backdropMark;
                 // wrongMarkedSquare na kviz koraku (Day 27 "Chess Notation" Part
                 // A/C) - polje koje korisnik POGRESNO izabrao kroz tekstualnu
                 // opciju (ne klikom na tablu, vidi onSelectQuizAnswer), isti
@@ -3827,7 +4453,36 @@ export const DailyLessonActivity = ({
                       }}
                     >
                       {children}
-                      {(quizMark?.dot || isWrongQuizMarked) && (
+                      {quizMark?.label && (
+                        // key = natpis, da se animacija ponovi kad se natpis promeni
+                        <div
+                          key={quizMark.label}
+                          className={backdropMark ? '' : 'animate-fadeIn'}
+                          style={{
+                            position: 'absolute',
+                            top: '4%',
+                            left: '50%',
+                            transform: 'translateX(-50%)',
+                            padding: '1px 6px',
+                            borderRadius: '9999px',
+                            background: quizMark.color.replace(
+                              /[\d.]+\)$/,
+                              '0.95)'
+                            ),
+                            color: '#000',
+                            fontSize: 'clamp(7px, 1.1vw, 11px)',
+                            fontWeight: 800,
+                            letterSpacing: '0.04em',
+                            whiteSpace: 'nowrap',
+                            pointerEvents: 'none',
+                            boxShadow: '0 2px 8px rgba(0,0,0,0.45)',
+                            zIndex: 2,
+                          }}
+                        >
+                          {quizMark.label}
+                        </div>
+                      )}
+                      {(transientMark?.dot || isWrongQuizMarked) && (
                         <div
                           style={{
                             position: 'absolute',
@@ -3877,6 +4532,23 @@ export const DailyLessonActivity = ({
                       }}
                     >
                       {children}
+                    </div>
+                  );
+                }
+
+                // Znak uz odigran potez - zadrzava "last move" boju polja.
+                if (boardAnnotation?.square === square) {
+                  return (
+                    <div
+                      style={{
+                        position: 'relative',
+                        width: '100%',
+                        height: '100%',
+                        background: boardTheme.lastMoveToSquare,
+                      }}
+                    >
+                      {children}
+                      {renderGlyphBadge(boardAnnotation.glyph, boardSize)}
                     </div>
                   );
                 }

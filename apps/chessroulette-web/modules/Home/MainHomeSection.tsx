@@ -85,6 +85,11 @@ export const MainHomeSection: React.FC<Props> = ({ className }) => {
                 Lessons
               </Button>
             </Link>
+            <Link href="/lesson_2">
+              <Button type="primary" className="font-bold w-full">
+                Lessons 600-1200
+              </Button>
+            </Link>
           </div>
         </div>
         <Image

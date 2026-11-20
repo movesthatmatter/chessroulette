@@ -5,7 +5,7 @@ import { Dialog } from '@app/components/Dialog';
 import { ButtonGreen } from '@app/components/Button/ButtonGreen';
 import { Icon } from '@app/components/Icon/Icon';
 import { dailyLesson } from '../movex';
-import { Lesson, LessonStep } from '../lessonDatabase';
+import { Lesson, LessonStep, getLessonsPagePath } from '../lessonDatabase';
 
 // Popup-ovi (ovaj fajl) naglasavaju **bold** ZELENOM bojom umesto obicnog
 // bold-a - za razliku od Conversation.tsx (AI chat) gde ostaje cist bold.
@@ -271,29 +271,46 @@ const MascotIntroBanner = ({
   bannerText,
   subBannerText,
   mascotSrc = '/pawny/pawny.webp',
+  framed,
 }: {
   bannerText: string;
   subBannerText?: string;
   /** Lesson.pawnyAvatar (Day 18 "Pawny 2.0") - isti princip kao chat avatar. */
   mascotSrc?: string;
+  /** Lesson.pawnyAvatarFramed - slika nosi svoju plocu i postolje. */
+  framed?: boolean;
 }) => (
-  <div className="relative mx-auto my-3 w-full max-w-[220px] rounded-xl overflow-hidden border border-[#07DA63]/40 bg-gradient-to-b from-[#07DA63]/[0.12] to-transparent px-4 py-5 flex flex-col items-center gap-2">
-    <div className="dl-mascot-bob relative h-[120px] w-[120px]">
+  <div className="relative mx-auto my-3 w-full max-w-[260px] rounded-2xl overflow-hidden border border-[#07DA63]/50 bg-[radial-gradient(ellipse_at_50%_40%,rgba(7,218,99,0.22),rgba(7,218,99,0.04)_60%,transparent)] px-5 pt-6 pb-5 flex flex-col items-center gap-2 shadow-[0_0_28px_rgba(7,218,99,0.22),inset_0_0_24px_rgba(7,218,99,0.08)]">
+    {/* Nagnuta svetleca ploca iza Pawny-ja */}
+    {!framed && (
+      <div className="dl-mascot-plate pointer-events-none absolute left-1/2 top-[38px] h-[120px] w-[120px] -translate-x-1/2 rotate-[14deg] rounded-[22px] border border-[#07DA63]/30 bg-[#07DA63]/[0.10] shadow-[0_0_30px_rgba(7,218,99,0.35)]" />
+    )}
+    <div
+      className={`dl-mascot-bob relative ${
+        framed ? 'h-[170px] w-[210px]' : 'h-[150px] w-[150px]'
+      }`}
+    >
       <Image src={mascotSrc} alt="Pawny" fill className="object-contain" />
     </div>
-    <p className="text-white font-bold text-sm tracking-wide uppercase text-center">
+    {/* Svetleci postolje ispod */}
+    {!framed && (
+      <div className="pointer-events-none -mt-3 h-[6px] w-[96px] rounded-full bg-[#07DA63]/70 blur-[3px] shadow-[0_0_14px_rgba(7,218,99,0.8)]" />
+    )}
+    <p className="mt-2 text-white font-bold text-lg tracking-wide uppercase text-center">
       {bannerText}
     </p>
     {subBannerText && (
-      <p className="text-[#07DA63] text-xs font-semibold tracking-wide text-center -mt-1">
+      <p className="text-[#07DA63] text-sm font-semibold tracking-wide text-center -mt-1">
         {subBannerText}
       </p>
     )}
     <style>{`
       @keyframes dl-mascot-bob { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-4px); } }
       .dl-mascot-bob { animation: dl-mascot-bob 1.6s ease-in-out infinite; }
+      @keyframes dl-mascot-plate { 0%, 100% { opacity: .75; } 50% { opacity: 1; } }
+      .dl-mascot-plate { animation: dl-mascot-plate 2.6s ease-in-out infinite; }
       @media (prefers-reduced-motion: reduce) {
-        .dl-mascot-bob { animation: none; }
+        .dl-mascot-bob, .dl-mascot-plate { animation: none; }
       }
     `}</style>
   </div>
@@ -379,6 +396,7 @@ const PieceIntroAnimation = ({
   bannerText,
   subBannerText,
   mascotSrc,
+  mascotFramed,
 }: {
   glyph: string;
   movement:
@@ -397,6 +415,7 @@ const PieceIntroAnimation = ({
   subBannerText?: string;
   /** Samo za movement:'mascot' - vidi MascotIntroBanner. */
   mascotSrc?: string;
+  mascotFramed?: boolean;
 }) => {
   if (movement === 'knight') return <KnightIntroAnimation glyph={glyph} />;
   if (movement === 'queen') return <QueenIntroAnimation glyph={glyph} />;
@@ -408,6 +427,7 @@ const PieceIntroAnimation = ({
         bannerText={bannerText ?? 'Meet Pawny'}
         subBannerText={subBannerText}
         mascotSrc={mascotSrc}
+        framed={mascotFramed}
       />
     );
   if (movement === 'static')
@@ -532,6 +552,73 @@ const CASTLE_CELL = 32;
  * animirano odigraju rokadu - isti vizuelni jezik kao PieceIntroAnimation
  * iznad, samo horizontalna traka umesto 4x4 table jer rokada zivi na jednom redu.
  */
+const FEN_GLYPHS: Record<string, string> = {
+  k: '♚',
+  q: '♛',
+  r: '♜',
+  b: '♝',
+  n: '♞',
+  p: '♟',
+};
+const FEN_CELL = 26;
+
+// Staticna tabla iz FEN-a za uvodni popup (introSteps.diagramFen).
+const FenDiagram = ({
+  fen,
+  highlightRank,
+}: {
+  fen: string;
+  highlightRank?: number;
+}) => {
+  const rows = fen
+    .split(' ')[0]
+    .split('/')
+    .map((row) =>
+      row
+        .split('')
+        .flatMap((c) => (/\d/.test(c) ? Array(Number(c)).fill('') : [c]))
+    );
+  return (
+    <div
+      className="mx-auto my-3 rounded-md overflow-hidden grid grid-cols-8"
+      style={{ width: FEN_CELL * 8 }}
+    >
+      {rows.map((row, r) =>
+        row.map((piece: string, f: number) => {
+          const dark = (r + f) % 2 === 1;
+          const highlighted = highlightRank === 8 - r;
+          return (
+            <div
+              key={`${r}-${f}`}
+              className="flex items-center justify-center leading-none"
+              style={{
+                width: FEN_CELL,
+                height: FEN_CELL,
+                fontSize: 21,
+                background: highlighted
+                  ? dark
+                    ? 'rgb(96, 170, 98)'
+                    : 'rgb(150, 210, 140)'
+                  : dark
+                  ? 'rgb(181, 136, 99)'
+                  : 'rgb(240, 217, 181)',
+                color:
+                  piece && piece === piece.toUpperCase() ? '#fff' : '#14181F',
+                textShadow:
+                  piece && piece === piece.toUpperCase()
+                    ? '0 0 2px #14181F, 0 0 1px #14181F'
+                    : 'none',
+              }}
+            >
+              {piece ? FEN_GLYPHS[piece.toLowerCase()] : ''}
+            </div>
+          );
+        })
+      )}
+    </div>
+  );
+};
+
 const CastlingDiagram = ({
   side,
 }: {
@@ -642,6 +729,8 @@ export const DailyLessonDialogContainer = ({
   // Visestepeni uvodni popup (lesson.introSteps) - lokalni UI-only indeks,
   // resetuje se na 0 svaki put kad se showIntro ponovo prikaze (npr. Repeat).
   const [introStepIndex, setIntroStepIndex] = useState(0);
+  // Tooltip placeholder dugmeta, prikazan kao tekst na klik (mobilni nema hover).
+  const [placeholderNote, setPlaceholderNote] = useState<string | null>(null);
   useEffect(() => {
     if (showIntro) setIntroStepIndex(0);
   }, [showIntro]);
@@ -683,13 +772,21 @@ export const DailyLessonDialogContainer = ({
         }
         content={
           <div className="flex flex-col px-4 py-2 items-center">
-            <PieceIntroAnimation
-              glyph={lesson.piece.glyph}
-              movement={lesson.piece.movement}
-              bannerText={lesson.piece.bannerText}
-              subBannerText={lesson.piece.subBannerText}
-              mascotSrc={lesson.pawnyAvatar}
-            />
+            {introStep?.diagramFen ? (
+              <FenDiagram
+                fen={introStep.diagramFen}
+                highlightRank={introStep.diagramHighlightRank}
+              />
+            ) : (
+              <PieceIntroAnimation
+                glyph={lesson.piece.glyph}
+                movement={lesson.piece.movement}
+                bannerText={lesson.piece.bannerText}
+                subBannerText={lesson.piece.subBannerText}
+                mascotSrc={lesson.pawnyAvatar}
+                mascotFramed={lesson.pawnyAvatarFramed}
+              />
+            )}
             <p className="text-slate-300 text-sm text-center leading-relaxed">
               {renderMarkdownInline(introStep?.text ?? lesson.intro.text)}
             </p>
@@ -703,22 +800,41 @@ export const DailyLessonDialogContainer = ({
                 ))}
               </ul>
             )}
-            <ButtonGreen
-              size="lg"
-              icon="PlayIcon"
-              iconKind="outline"
-              className="w-full text-[16px] h-[44px] rounded-[22px]"
-              style={{ marginTop: 20 }}
-              onClick={() => {
-                if (isLastIntroStep) {
-                  onStartLesson();
-                } else {
-                  setIntroStepIndex((i) => i + 1);
-                }
-              }}
-            >
-              &nbsp;{introStep?.buttonText ?? "Let's start"}
-            </ButtonGreen>
+            {lesson.piece.movement === 'mascot' ? (
+              // Pawny partije - stakleno dugme sa zelenim sjajem (dizajn za Pawny 4.0).
+              <button
+                type="button"
+                className="group relative mt-5 flex h-[50px] w-full items-center justify-center gap-2 overflow-hidden rounded-full border border-white/15 bg-gradient-to-b from-white/[0.13] to-white/[0.04] text-[17px] font-bold text-white shadow-[0_10px_26px_rgba(0,0,0,0.4),inset_0_1px_0_rgba(255,255,255,0.18)] transition hover:border-[#07DA63]/60 hover:shadow-[0_10px_26px_rgba(0,0,0,0.4),0_0_22px_rgba(7,218,99,0.35),inset_0_1px_0_rgba(255,255,255,0.18)] active:scale-[0.98]"
+                onClick={() => {
+                  if (isLastIntroStep) {
+                    onStartLesson();
+                  } else {
+                    setIntroStepIndex((i) => i + 1);
+                  }
+                }}
+              >
+                <Icon name="PlayIcon" kind="outline" className="h-6 w-6" />
+                {introStep?.buttonText ?? "Let's start"}
+                <span className="pointer-events-none absolute bottom-0 left-1/2 h-[2px] w-2/3 -translate-x-1/2 rounded-full bg-gradient-to-r from-transparent via-[#07DA63] to-transparent opacity-80 transition-opacity group-hover:opacity-100" />
+              </button>
+            ) : (
+              <ButtonGreen
+                size="lg"
+                icon="PlayIcon"
+                iconKind="outline"
+                className="w-full text-[16px] h-[44px] rounded-[22px]"
+                style={{ marginTop: 20 }}
+                onClick={() => {
+                  if (isLastIntroStep) {
+                    onStartLesson();
+                  } else {
+                    setIntroStepIndex((i) => i + 1);
+                  }
+                }}
+              >
+                &nbsp;{introStep?.buttonText ?? "Let's start"}
+              </ButtonGreen>
+            )}
           </div>
         }
       />
@@ -738,6 +854,12 @@ export const DailyLessonDialogContainer = ({
           <div className="flex flex-col px-4 py-2 items-center">
             {preStepIntro.diagram && (
               <CastlingDiagram side={preStepIntro.diagram} />
+            )}
+            {preStepIntro.diagramFen && (
+              <FenDiagram
+                fen={preStepIntro.diagramFen}
+                highlightRank={preStepIntro.diagramHighlightRank}
+              />
             )}
             <p className="text-slate-300 text-sm text-center leading-relaxed">
               {renderMarkdownInline(preStepIntro.text)}
@@ -855,7 +977,9 @@ export const DailyLessonDialogContainer = ({
           <div className="flex flex-col px-4 py-2 items-center">
             <p className="text-slate-300 text-sm text-center leading-relaxed">
               {renderMarkdownInline(
-                graduationResult ? graduationResult.body : step.doneText
+                graduationResult
+                  ? graduationResult.body
+                  : lesson?.endScreenText ?? step.doneText
               )}
             </p>
             {scoreTier && (
@@ -924,7 +1048,8 @@ export const DailyLessonDialogContainer = ({
                       ? 'PlayIcon'
                       : btn.action === 'testOpening'
                       ? 'AcademicCapIcon'
-                      : btn.action === 'nextLesson'
+                      : btn.action === 'nextLesson' ||
+                        btn.action === 'placeholder'
                       ? 'ArrowRightIcon'
                       : 'LightBulbIcon'
                   }
@@ -940,11 +1065,9 @@ export const DailyLessonDialogContainer = ({
                           color: '#000000',
                         }
                       : {}),
+                    ...(btn.action === 'placeholder' ? { opacity: 0.45 } : {}),
                   }}
-                  disabled={
-                    btn.action === 'placeholder' ||
-                    (btn.action === 'nextLesson' && !onNextLesson)
-                  }
+                  disabled={btn.action === 'nextLesson' && !onNextLesson}
                   tooltip={
                     btn.action === 'placeholder'
                       ? (btn as { tooltip?: string }).tooltip ?? 'Coming soon'
@@ -960,7 +1083,7 @@ export const DailyLessonDialogContainer = ({
                         }
                       : btn.action === 'done'
                       ? () => {
-                          window.location.href = '/lessons';
+                          window.location.href = getLessonsPagePath(lesson?.id);
                         }
                       : btn.action === 'review'
                       ? onGameReview
@@ -979,7 +1102,11 @@ export const DailyLessonDialogContainer = ({
                         }
                       : btn.action === 'nextLesson'
                       ? onNextLesson
-                      : undefined
+                      : () =>
+                          setPlaceholderNote(
+                            (btn as { tooltip?: string }).tooltip ??
+                              'Coming soon'
+                          )
                   }
                 >
                   &nbsp;{btn.label}
@@ -1033,12 +1160,17 @@ export const DailyLessonDialogContainer = ({
                   className="w-full text-[16px] h-[44px] rounded-[22px]"
                   style={{ marginTop: 12 }}
                   onClick={() => {
-                    window.location.href = '/lessons';
+                    window.location.href = getLessonsPagePath(lesson?.id);
                   }}
                 >
                   &nbsp;Done
                 </ButtonGreen>
               </>
+            )}
+            {placeholderNote && (
+              <p className="text-slate-300 text-xs text-center mt-3">
+                {placeholderNote}
+              </p>
             )}
           </div>
         }

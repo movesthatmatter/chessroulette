@@ -352,6 +352,51 @@ export function resolveSolutionMove(
   return best?.move ?? null;
 }
 
+const CENTER_SQUARES: Square[] = ['d4', 'd5', 'e4', 'e5'];
+
+/** LessonStep.quizCenterControl - centralna polja koja figura posle poteza zauzima (zeleno) ili napada (plavo, strelica). */
+export function centerControlHighlight(
+  fen: ChessFEN,
+  uci: string,
+  showMove: boolean
+) {
+  const arrows: { from: string; to: string; color: string }[] = [];
+  const squares: { square: string; color: string; fill: boolean }[] = [];
+  try {
+    const chess = new Chess(fen);
+    const move = chess.move({ from: uci.slice(0, 2), to: uci.slice(2, 4) });
+    if (showMove)
+      arrows.push({
+        from: move.from,
+        to: move.to,
+        color: 'rgba(7, 218, 99, 0.8)',
+      });
+    for (const sq of CENTER_SQUARES) {
+      if (sq === move.to) {
+        squares.push({
+          square: sq,
+          color: 'rgba(7, 218, 99, 0.55)',
+          fill: true,
+        });
+      } else if (chess.attackers(sq, move.color).includes(move.to)) {
+        squares.push({
+          square: sq,
+          color: 'rgba(17, 198, 209, 0.45)',
+          fill: true,
+        });
+        arrows.push({
+          from: move.to,
+          to: sq,
+          color: 'rgba(17, 198, 209, 0.8)',
+        });
+      }
+    }
+  } catch {
+    // nelegalan uci - bez highlighta
+  }
+  return { arrows, squares };
+}
+
 /**
  * `requireExactPromotion` (LessonStep.requireExactPromotion, npr. Day 19
  * "Pawn Promotion" trke - samo promocija u DAMU je tacna, top/lovac/skakac
