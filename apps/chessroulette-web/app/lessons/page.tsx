@@ -15,7 +15,7 @@ export default async function LessonsPage() {
   return (
     <div className="flex flex-col h-full container mx-auto">
       <Header showOnboarding session={session} />
-      <DailyLessonsSection />
+      <DailyLessonsSection levelLabel="Level 0–600" />
       <Footer />
     </div>
   );

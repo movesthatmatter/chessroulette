@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Chess } from 'chess.js';
 import { ChessFEN } from '@xmatter/util-kit';
+import type { Lesson } from '../lessonDatabase';
 import {
   getStockfishWorker,
   withStockfishLock,
@@ -18,6 +19,9 @@ type Props = {
    * bez diranja Day 14 ponasanja. Default (nedefinisano) = RANDOM_MOVE_CHANCE.
    */
   randomMoveChance?: number;
+  /** Lesson.pawnyRating - rejting ove partije; kad je zadat, menja randomMoveChance po potezu. */
+  rating?: number;
+  ratingConfig?: Lesson['pawnyRating'];
 };
 
 /**
@@ -74,6 +78,17 @@ function pickStockfishOrRandom(
 // izmedju nasumicnog i Stockfish-ovog predloga je trenutan, ovo je samo
 // vestacka pauza da partija ne deluje robotski). NIKAD duze od 3 sekunde,
 // cela partija - samo 1, 2 ili 3s, nasumicno, bez izuzetaka.
+// Rejting poteza (T +- jitter, u granicama) prevodi se u udeo nasumicnih poteza.
+function randomChanceForRating(
+  rating: number,
+  cfg: NonNullable<Lesson['pawnyRating']>
+) {
+  const jittered = rating + (Math.random() * 2 - 1) * cfg.jitter;
+  const elo = Math.min(cfg.clampMax, Math.max(cfg.clampMin, jittered));
+  const t = (elo - cfg.clampMin) / (cfg.clampMax - cfg.clampMin);
+  return cfg.randomAtMin + t * (cfg.randomAtMax - cfg.randomAtMin);
+}
+
 const FIRST_MOVE_THINK_MS = 300;
 
 function pickPawnyThinkMs(fen: string) {
@@ -88,6 +103,8 @@ export const PawnyEngine = ({
   active,
   onMove,
   randomMoveChance = RANDOM_MOVE_CHANCE,
+  rating,
+  ratingConfig,
 }: Props) => {
   const lastRepliedFenRef = useRef<string | null>(null);
   const onMoveRef = useRef(onMove);
@@ -132,7 +149,11 @@ export const PawnyEngine = ({
     };
 
     // Nasumican potez ne treba Stockfish uopste - ne zavisi od workera.
-    if (Math.random() < randomMoveChance) {
+    const chance =
+      rating != null && ratingConfig
+        ? randomChanceForRating(rating, ratingConfig)
+        : randomMoveChance;
+    if (Math.random() < chance) {
       playAfterThinking(randomOf(legal));
     } else {
       // Vidi MateDefenseEngine.tsx - isti razlog za withStockfishLock (deljeni
@@ -176,7 +197,7 @@ export const PawnyEngine = ({
         thinkTimeoutRef.current = null;
       }
     };
-  }, [fen, active, randomMoveChance]);
+  }, [fen, active, randomMoveChance, rating, ratingConfig]);
 
   return null;
 };

@@ -43,10 +43,7 @@ function renderMarkdownInline(
       const isTitle = isTitleMessage && !seenFirstBold;
       seenFirstBold = true;
       return (
-        <strong
-          key={i}
-          className={isTitle ? 'text-white' : 'text-[#11C6D1]'}
-        >
+        <strong key={i} className={isTitle ? 'text-white' : 'text-[#11C6D1]'}>
           {part.slice(2, -2)}
         </strong>
       );
@@ -80,6 +77,9 @@ type Props = {
    * u skrolujucem toku kao quizOptions dugmad gore. */
   suggestedMovePlayed?: boolean;
   onPlaySuggestedMove?: (uci: string) => void;
+  /** LessonStep.suggestSolutionMoves (Lessons 2 Day 29) - dugme sa sledecim potezom ispod poslednje poruke. */
+  nextSolutionMove?: { uci: string; label: string } | null;
+  onPlayNextSolutionMove?: (uci: string) => void;
   /** Lesson.pawnyAvatar (Day 18 "Pawny 2.0") - zamenjuje podrazumevani
    * `/pawny/pawny.webp` kroz celu lekciju. */
   pawnyAvatarSrc?: string;
@@ -111,6 +111,8 @@ const Conversation = ({
   onToggleMultiOption,
   suggestedMovePlayed,
   onPlaySuggestedMove,
+  nextSolutionMove,
+  onPlayNextSolutionMove,
   pawnyAvatarSrc = '/pawny/pawny.webp',
   disableStickyQuizQuestion,
 }: Props) => {
@@ -136,6 +138,15 @@ const Conversation = ({
       }
     });
   }, [currentChapterState.messages, pulseDot]);
+
+  // Dugmad ispod poruke se pojave tek kad kucanje zavrsi - i tada spusti chat na dno.
+  useEffect(() => {
+    requestAnimationFrame(() => {
+      if (scrollRef.current) {
+        scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+      }
+    });
+  }, [typingDone, quizSelectedIndex, step?.id]);
 
   const scrollToBottom = () => {
     if (scrollRef.current) {
@@ -220,6 +231,7 @@ const Conversation = ({
               {step?.kind === 'quiz' &&
                 step.quizOptions &&
                 !step.quizMultiSelect &&
+                !step.quizAnswerViaNextButton &&
                 quizSelectedIndex == null &&
                 index === lastTaskMessageIndex && (
                   <div className="grid grid-cols-2 gap-2 px-2 md:px-4 mt-1 mb-2">
@@ -280,152 +292,165 @@ const Conversation = ({
 
           return (
             <React.Fragment key={index}>
-            <div
-              className={`mb-1 pt-1 text-[15px] md:pt-2 md:mb-2 ${
-                isStickyQuizQuestion
-                  ? 'sticky top-0 z-20 bg-op-widget pb-2'
-                  : isLastMessage && nextReady
+              <div
+                className={`mb-1 pt-1 text-[15px] md:pt-2 md:mb-2 ${
+                  isStickyQuizQuestion
+                    ? 'sticky top-0 z-20 bg-op-widget pb-2'
+                    : isLastMessage && nextReady
                     ? 'relative z-[95]'
                     : ''
-              }`}
-            >
-              {/* CHAT GPT TEXT */}
-              {participant.includes('chatGPT123456') || isPawny ? (
-                <div className="flex min-w-0 items-start">
-                  {/* Pawny avatar vidljiv i na mobilnom - novi, namerno
+                }`}
+              >
+                {/* CHAT GPT TEXT */}
+                {participant.includes('chatGPT123456') || isPawny ? (
+                  <div className="flex min-w-0 items-start">
+                    {/* Pawny avatar vidljiv i na mobilnom - novi, namerno
                       istaknut lik, za razliku od Coach loga koji ostaje
                       samo desktop (postojece ponasanje, nepromenjeno). */}
-                  <div className={isPawny ? 'flex' : 'hidden md:flex'}>
-                    {isLastFromThisParticipant ? (
-                      isPawny ? (
-                        <div
-                          className={`relative w-[28px] h-[28px] md:w-[36px] md:h-[36px] mt-1 ${
-                            isLastMessage ? 'pawny-talking' : ''
-                          }`}
-                        >
-                          <Image
-                            src={pawnyAvatarSrc}
-                            alt="Pawny"
-                            fill
-                            className="object-contain"
-                          />
-                        </div>
+                    <div className={isPawny ? 'flex' : 'hidden md:flex'}>
+                      {isLastFromThisParticipant ? (
+                        isPawny ? (
+                          <div
+                            className={`relative w-[28px] h-[28px] md:w-[36px] md:h-[36px] mt-1 ${
+                              isLastMessage ? 'pawny-talking' : ''
+                            }`}
+                          >
+                            <Image
+                              src={pawnyAvatarSrc}
+                              alt="Pawny"
+                              fill
+                              className="object-contain"
+                            />
+                          </div>
+                        ) : (
+                          <div
+                            className={`relative w-[28px] h-[28px] md:w-[36px] md:h-[36px] mt-1 ${
+                              isLastMessage ? 'outposty-talking' : ''
+                            }`}
+                          >
+                            <Image
+                              src="/outposty/outposty.webp"
+                              alt="Outposty"
+                              fill
+                              className="object-contain"
+                            />
+                          </div>
+                        )
                       ) : (
-                        <div
-                          className={`relative w-[28px] h-[28px] md:w-[36px] md:h-[36px] mt-1 ${
-                            isLastMessage ? 'outposty-talking' : ''
-                          }`}
-                        >
-                          <Image
-                            src="/outposty/outposty.webp"
-                            alt="Outposty"
-                            fill
-                            className="object-contain"
-                          />
-                        </div>
-                      )
-                    ) : (
-                      <div className="min-w-[28px] md:min-w-[36px]" />
-                    )}
-                  </div>
+                        <div className="min-w-[28px] md:min-w-[36px]" />
+                      )}
+                    </div>
 
-                  <div className="text-white text-sm px-2 md:px-4  flex-1 min-w-0 max-w-md break-words overflow-hidden">
-                    {' '}
-                    <div
-                      className={
-                        isTask
-                          ? 'border border-[#07DA63]/30 bg-[#07DA63]/[0.07] rounded-xl px-3 py-2.5'
-                          : isPawny
+                    <div className="text-white text-sm px-2 md:px-4  flex-1 min-w-0 max-w-md break-words overflow-hidden">
+                      {' '}
+                      <div
+                        className={
+                          isTask
+                            ? 'border border-[#07DA63]/30 bg-[#07DA63]/[0.07] rounded-xl px-3 py-2.5'
+                            : isPawny
                             ? // Pawny-jeve poruke idu u pravi "govorni oblacic" (nasa
                               // brend plava #11C6D1) - razlikuje se od Outposty-jevog
                               // cistog teksta bez pozadine (trener/podrska nepromenjeni).
                               'relative bg-[#11C6D1]/[0.1] border border-[#11C6D1]/30 rounded-2xl rounded-tl-sm px-3 py-2.5'
                             : undefined
-                      }
-                    >
-                      {isLastMessage && typeof lastMessage === 'string' ? (
-                        <TypewriterText
-                          lastMessage={lastMessage}
-                          kind={msg.kind}
-                          scrollToBottom={scrollToBottom}
-                          onTypingStart={handleTypingStart}
-                          onDone={() => setTypingDone(true)}
-                        />
-                      ) : (
-                        <p className="text-[14px] text-left break-words leading-relaxed whitespace-pre-line">
-                          {typeof msg.content === 'string' &&
-                            renderMarkdownInline(msg.content, msg.kind)}
-                        </p>
-                      )}
+                        }
+                      >
+                        {isLastMessage && typeof lastMessage === 'string' ? (
+                          <TypewriterText
+                            lastMessage={lastMessage}
+                            kind={msg.kind}
+                            scrollToBottom={scrollToBottom}
+                            onTypingStart={handleTypingStart}
+                            onDone={() => setTypingDone(true)}
+                          />
+                        ) : (
+                          <p className="text-[14px] text-left break-words leading-relaxed whitespace-pre-line">
+                            {typeof msg.content === 'string' &&
+                              renderMarkdownInline(msg.content, msg.kind)}
+                          </p>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                  {/* <div className="w-8 h-8 min-w-8  flex items-center justify-center rounded-full bg-indigo-1600 text-white font-semibold text-sm">
+                    {/* <div className="w-8 h-8 min-w-8  flex items-center justify-center rounded-full bg-indigo-1600 text-white font-semibold text-sm">
                 DM
               </div> */}
-                </div>
-              ) : (
-                <div className="flex justify-end items-center min-w-0 w-full">
-                  <div className="mr-4 border-conversation-100 max-w-xs min-w-0 break-words bg-[#111111]/40 text-white  border shadow-green-soft  rounded-[20px]   text-sm ">
-                    <p className="flex p-[14px]   justify-start  text-left whitespace-pre-line">
-                      {msg.content}
-                    </p>
                   </div>
-                  {userData.picture ? (
-                    <div className="w-9 h-9 min-w-8  flex items-center justify-center rounded-full">
-                      <img
-                        className="w-9 h-9 min-w-8  flex items-center justify-center rounded-full  object-cover"
-                        src={userData.picture}
-                        alt="user_picture"
+                ) : (
+                  <div className="flex justify-end items-center min-w-0 w-full">
+                    <div className="mr-4 border-conversation-100 max-w-xs min-w-0 break-words bg-[#111111]/40 text-white  border shadow-green-soft  rounded-[20px]   text-sm ">
+                      <p className="flex p-[14px]   justify-start  text-left whitespace-pre-line">
+                        {msg.content}
+                      </p>
+                    </div>
+                    {userData.picture ? (
+                      <div className="w-9 h-9 min-w-8  flex items-center justify-center rounded-full">
+                        <img
+                          className="w-9 h-9 min-w-8  flex items-center justify-center rounded-full  object-cover"
+                          src={userData.picture}
+                          alt="user_picture"
+                        />
+                      </div>
+                    ) : (
+                      <div className="w-9 h-9 min-w-8  flex items-center justify-center rounded-full bg-green-500 text-white font-semibold text-sm">
+                        {userData.name_first?.slice(0, 1)}
+                        {userData.name_last?.slice(0, 1)}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {pulseDot && isLastMessage && !isSales && (
+                  <div className="flex justify-start items-center mt-4 ">
+                    <div className="outposty-talking relative w-9 h-9 rounded-full overflow-hidden">
+                      <Image
+                        src="/outposty/outposty.webp"
+                        alt="Outposty"
+                        fill
+                        className="object-contain"
                       />
                     </div>
-                  ) : (
-                    <div className="w-9 h-9 min-w-8  flex items-center justify-center rounded-full bg-green-500 text-white font-semibold text-sm">
-                      {userData.name_first?.slice(0, 1)}
-                      {userData.name_last?.slice(0, 1)}
-                    </div>
-                  )}
-                </div>
-              )}
 
-              {pulseDot && isLastMessage && !isSales && (
-                <div className="flex justify-start items-center mt-4 ">
-                  <div className="outposty-talking relative w-9 h-9 rounded-full overflow-hidden">
-                    <Image
-                      src="/outposty/outposty.webp"
-                      alt="Outposty"
-                      fill
-                      className="object-contain"
-                    />
-                  </div>
-
-                  <div className="max-w-xs  mr-4 max-w-[80%]  text-white  rounded-xl  py-2 text-sm px-4">
-                    <div className="flex items-center pt-2 space-x-1">
-                      <span className="w-2 h-2 bg-[#D9D9D9]/20 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
-                      <span className="w-2 h-2 bg-[#D9D9D9]/20 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
-                      <span className="w-2 h-2 bg-[#D9D9D9]/20 rounded-full animate-bounce"></span>
+                    <div className="max-w-xs  mr-4 max-w-[80%]  text-white  rounded-xl  py-2 text-sm px-4">
+                      <div className="flex items-center pt-2 space-x-1">
+                        <span className="w-2 h-2 bg-[#D9D9D9]/20 rounded-full animate-bounce [animation-delay:-0.3s]"></span>
+                        <span className="w-2 h-2 bg-[#D9D9D9]/20 rounded-full animate-bounce [animation-delay:-0.15s]"></span>
+                        <span className="w-2 h-2 bg-[#D9D9D9]/20 rounded-full animate-bounce"></span>
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
-              {optionsInSticky && quizOptionsBlock}
-            </div>
-            {!optionsInSticky && quizOptionsBlock}
-            {step?.suggestedMove &&
-              !suggestedMovePlayed &&
-              index === lastTaskMessageIndex && (
-                <div className="px-2 md:px-4 mt-1 mb-2">
-                  <button
-                    type="button"
-                    onClick={() => onPlaySuggestedMove?.(step.suggestedMove!.uci)}
-                    className="inline-flex items-center gap-2 text-sm font-bold px-4 py-2 rounded-xl border border-[#07DA63] text-[#07DA63] hover:bg-[#07DA63]/[0.08] transition-colors duration-150 cursor-pointer"
-                  >
-                    ♜ Play {step.suggestedMove.label}
-                  </button>
-                </div>
-              )}
+                )}
+                {optionsInSticky && quizOptionsBlock}
+              </div>
+              {!optionsInSticky && quizOptionsBlock}
+              {step?.suggestedMove &&
+                !suggestedMovePlayed &&
+                index === lastTaskMessageIndex && (
+                  <div className="px-2 md:px-4 mt-1 mb-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onPlaySuggestedMove?.(step.suggestedMove!.uci)
+                      }
+                      className="inline-flex items-center gap-2 text-sm font-bold px-4 py-2 rounded-xl border border-[#07DA63] text-[#07DA63] hover:bg-[#07DA63]/[0.08] transition-colors duration-150 cursor-pointer"
+                    >
+                      ♜ Play {step.suggestedMove.label}
+                    </button>
+                  </div>
+                )}
             </React.Fragment>
           );
         })}
+        {nextSolutionMove && (
+          <div className="px-2 md:px-4 mt-1 mb-2 animate-fadeIn">
+            <button
+              type="button"
+              onClick={() => onPlayNextSolutionMove?.(nextSolutionMove.uci)}
+              className="inline-flex items-center gap-2 text-sm font-bold px-4 py-2 rounded-xl border border-[#07DA63] text-[#07DA63] hover:bg-[#07DA63]/[0.08] transition-colors duration-150 cursor-pointer"
+            >
+              ♜ Play {nextSolutionMove.label}
+            </button>
+          </div>
+        )}
         {/* Privremeno iskljuceno - razmak je jeo visinu chata; vratiti ako se ispostavi cemu je sluzio. */}
         {/* <div className="h-12" /> */}
       </div>
